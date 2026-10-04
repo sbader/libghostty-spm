@@ -32,7 +32,7 @@ public struct TerminalScrollModifiers: Sendable {
     }
 
     public var momentum: Momentum {
-        Momentum(rawValue: (rawValue >> 1) & 0x3) ?? .none
+        Momentum(rawValue: (rawValue >> 1) & 0x7) ?? .none
     }
 
     public enum Momentum: Int32, Sendable {
@@ -40,6 +40,9 @@ public struct TerminalScrollModifiers: Sendable {
         case began = 1
         case stationary = 2
         case changed = 3
+        case ended = 4
+        case cancelled = 5
+        case mayBegin = 6
     }
 
     #if !canImport(UIKit) && canImport(AppKit)
@@ -52,6 +55,15 @@ public struct TerminalScrollModifiers: Sendable {
             }
             if phase.contains(.changed) {
                 return .changed
+            }
+            if phase.contains(.ended) {
+                return .ended
+            }
+            if phase.contains(.cancelled) {
+                return .cancelled
+            }
+            if phase.contains(.mayBegin) {
+                return .mayBegin
             }
             return .none
         }

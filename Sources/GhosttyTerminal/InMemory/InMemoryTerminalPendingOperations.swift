@@ -1,4 +1,5 @@
 import Foundation
+import GhosttyKit
 
 /// Host output not yet handed to a surface, oldest first.
 ///
@@ -9,6 +10,7 @@ import Foundation
 struct InMemoryTerminalPendingOperations {
     enum Operation {
         case write(Data)
+        case surface(@Sendable (ghostty_surface_t) -> Void)
         case processExit(exitCode: UInt32, runtimeMilliseconds: UInt64)
     }
 

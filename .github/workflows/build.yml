@@ -90,6 +90,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Apply Fork Build Support
+        run: |
+          bash ./Patches/local/build-support/0001-artifact-and-replay-support.sh "$PWD"
+          chmod +x Patches/local/ghostty/*.sh
+
       - name: Setup Zig
         # Keep in sync with minimum_zig_version in the pinned upstream's
         # build.zig.zon; a version drift fails every target at once.
@@ -135,6 +140,9 @@ jobs:
 
       - name: Set up Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Apply Fork Build Support
+        run: bash ./Patches/local/build-support/0001-artifact-and-replay-support.sh "$PWD"
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4

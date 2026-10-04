@@ -22,6 +22,7 @@
         // class declares only these `var xxx: XxxState = .init()` lines,
         // plus the lazy objects that need `self`. Constants live as statics
         // in the extension that uses them.
+        var nativeScroll: NativeScrollState = .init()
         var hardwareKeyboard: HardwareKeyboardState = .init()
         var pointer: PointerInteractionState = .init()
         var momentumScroll: MomentumScrollState = .init()

@@ -17,6 +17,7 @@
         func presentTouchMenu(at point: CGPoint) {
             guard surface != nil else { return }
             stopMomentumScrolling()
+            nativeScrollHost?.stopScrolling()
             touchSelection.menuPoint = point
             if #available(iOS 16.0, *) {
                 selectionEditMenuInteraction.presentEditMenu(
