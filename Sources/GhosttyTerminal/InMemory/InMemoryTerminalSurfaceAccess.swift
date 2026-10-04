@@ -17,6 +17,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
     private let tick: Tick
 
     private var surface: ghostty_surface_t?
+    private var availabilityHandler: (@Sendable (Bool) -> Void)?
     /// Prevents the caller from freeing a surface while a C operation uses it.
     private var activeOperations = 0
     /// Host output in arrival order, not yet handed to a surface. Each entry
@@ -48,6 +49,8 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
     /// backlog instead of one block per `receive`: a flood of small writes
     /// queued a block per write, and the blocks outlived the bytes.
     private var isDrainScheduled = false
+    private var isPerformingMainOperation = false
+    private var pendingMainOperation: (@Sendable (ghostty_surface_t) -> Void)?
     /// Operations one drain block hands over before it yields the queue, so
     /// a `waitForPendingOutput` barrier is not starved by a live flood.
     private static let drainBatchLimit = 64
@@ -83,11 +86,16 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
                 pendingTrimOwed = false
                 operations.trimWrites(toLimit: Self.pendingWriteByteLimit)
             }
-            scheduleDrain()
+            if pendingMainOperation != nil {
+                DispatchQueue.main.async { [self] in performMainOperation() }
+            } else {
+                scheduleDrain()
+            }
         }
         let backlogChange = takeBacklogChange()
         condition.unlock()
         backlogChange?()
+        notifyAvailability()
     }
 
     @discardableResult
@@ -101,7 +109,30 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
         surface = nil
         waitForActiveOperations(ticking: expectedSurface)
         condition.unlock()
+        notifyAvailability()
         return true
+    }
+
+    func setAvailabilityHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        condition.lock()
+        availabilityHandler = handler
+        condition.unlock()
+        notifyAvailability()
+    }
+
+    private func notifyAvailability() {
+        condition.lock()
+        let handler = availabilityHandler
+        let available = surface != nil
+        condition.unlock()
+        handler?(available)
+    }
+
+    func enqueueSurfaceOperation(_ operation: @escaping @Sendable (ghostty_surface_t) -> Void) {
+        condition.lock()
+        operations.append(.surface(operation))
+        if surface != nil { scheduleDrain() }
+        condition.unlock()
     }
 
     var currentSurface: ghostty_surface_t? {
@@ -187,13 +218,15 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
     func waitForPendingOutput() -> Bool {
         condition.lock()
         let target = operations.appendedSequence
+        let isReentrant = Thread.isMainThread && isPerformingMainOperation
         condition.unlock()
+        if isReentrant { return false }
         while true {
             waitForOutputQueueBarrier()
             condition.lock()
             let attached = surface != nil
-            let done = operations.retiredSequence >= target
-            let empty = operations.isEmpty
+            let done = operations.retiredSequence >= target && pendingMainOperation == nil && !isPerformingMainOperation
+            let empty = operations.isEmpty && pendingMainOperation == nil && !isPerformingMainOperation
             condition.unlock()
             if !attached { return empty }
             if done { return true }
@@ -202,14 +235,39 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
 
     private func waitForOutputQueueBarrier() {
         if Thread.isMainThread {
+            performMainOperation()
             let drained = DispatchSemaphore(value: 0)
             outputQueue.async { drained.signal() }
             while drained.wait(timeout: .now() + Self.mainThreadPollInterval) == .timedOut {
+                performMainOperation()
                 tickCurrentSurface()
             }
+            performMainOperation()
         } else {
             outputQueue.sync {}
         }
+    }
+
+    // Resolve and pin only on main, so teardown never waits for a blocked main dispatch.
+    private func performMainOperation() {
+        precondition(Thread.isMainThread)
+        condition.lock()
+        guard let operation = pendingMainOperation, let surface else {
+            condition.unlock()
+            return
+        }
+        pendingMainOperation = nil
+        isPerformingMainOperation = true
+        activeOperations += 1
+        condition.unlock()
+        operation(surface)
+        condition.lock()
+        isPerformingMainOperation = false
+        activeOperations -= 1
+        condition.broadcast()
+        isDrainScheduled = false
+        if self.surface != nil, !operations.isEmpty { scheduleDrain() }
+        condition.unlock()
     }
 
     /// Ticks outside the lock and without counting an operation: the tick can
@@ -229,7 +287,7 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
     /// attached when the drain reaches it; a drain that finds no surface
     /// stops, and `setSurface` schedules the next one.
     private func scheduleDrain() {
-        guard !isDrainScheduled else { return }
+        guard !isDrainScheduled, pendingMainOperation == nil, !isPerformingMainOperation else { return }
         isDrainScheduled = true
         outputQueue.async { [self] in drain() }
     }
@@ -254,6 +312,12 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
             condition.unlock()
             return false
         }
+        if case let .surface(action) = operation {
+            pendingMainOperation = action
+            condition.unlock()
+            DispatchQueue.main.async { [self] in performMainOperation() }
+            return false
+        }
         activeOperations += 1
         condition.unlock()
 
@@ -261,6 +325,8 @@ final class InMemoryTerminalSurfaceAccess: @unchecked Sendable {
         switch operation {
         case let .write(data):
             write(surface, data)
+        case .surface:
+            preconditionFailure("Main-thread operations are dispatched before parsing")
         case let .processExit(exitCode, runtimeMilliseconds):
             processExit(surface, exitCode, runtimeMilliseconds)
         }

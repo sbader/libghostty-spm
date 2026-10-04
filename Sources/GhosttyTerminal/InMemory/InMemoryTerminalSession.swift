@@ -16,6 +16,7 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
     private var lastResize: InMemoryTerminalViewport?
     private let writeHandler: @Sendable (Data) -> Void
     private let resizeHandler: @Sendable (InMemoryTerminalViewport) -> Void
+    private let configureSurface: @Sendable (ghostty_surface_t) -> Void
 
     /// Skip resize dispatches whose grid is unchanged and only the pixel
     /// metrics moved.
@@ -31,16 +32,20 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
     /// repaint that re-wraps its content.
     public let suppressesPixelOnlyResizes: Bool
 
+    /// Surface callbacks borrow the pointer; do not retain it or tear down the surface from a callback.
     public init(
         write: @escaping @Sendable (Data) -> Void,
         resize: @escaping @Sendable (InMemoryTerminalViewport) -> Void,
-        suppressesPixelOnlyResizes: Bool = false
+        suppressesPixelOnlyResizes: Bool = false,
+        configureSurface: @escaping @Sendable (ghostty_surface_t) -> Void = { _ in },
+        receiveOutput: (@Sendable (ghostty_surface_t, Data) -> Void)? = nil
     ) {
         writeHandler = write
         resizeHandler = resize
         self.suppressesPixelOnlyResizes = suppressesPixelOnlyResizes
+        self.configureSurface = configureSurface
         surfaceAccess = InMemoryTerminalSurfaceAccess(
-            write: Self.writeToSurface,
+            write: receiveOutput ?? Self.writeToSurface,
             processExit: Self.reportProcessExit,
             tick: Self.tickApp
         )
@@ -55,11 +60,13 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
         surfaceWrite: @escaping InMemoryTerminalSurfaceAccess.Write,
         processExit: @escaping InMemoryTerminalSurfaceAccess.ProcessExit =
             InMemoryTerminalSession.reportProcessExit,
-        tick: @escaping InMemoryTerminalSurfaceAccess.Tick = { _ in }
+        tick: @escaping InMemoryTerminalSurfaceAccess.Tick = { _ in },
+        configureSurface: @escaping @Sendable (ghostty_surface_t) -> Void = { _ in }
     ) {
         writeHandler = write
         resizeHandler = resize
         self.suppressesPixelOnlyResizes = suppressesPixelOnlyResizes
+        self.configureSurface = configureSurface
         surfaceAccess = InMemoryTerminalSurfaceAccess(
             write: surfaceWrite,
             processExit: processExit,
@@ -70,6 +77,7 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
     // MARK: - Surface Lifecycle
 
     func setSurface(_ surface: ghostty_surface_t?) {
+        if let surface { configureSurface(surface) }
         surfaceAccess.setSurface(surface)
         TerminalDebugLog.log(
             .lifecycle,
@@ -91,6 +99,20 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
 
     var currentSurface: ghostty_surface_t? {
         surfaceAccess.currentSurface
+    }
+
+    public func setSurfaceAvailabilityHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        surfaceAccess.setAvailabilityHandler(handler)
+    }
+
+    /// The pointer is valid only within the closure. Defer surface teardown until it returns.
+    public func withSurface<Result>(_ operation: (ghostty_surface_t) -> Result) -> Result? {
+        surfaceAccess.withCurrentSurface(operation)
+    }
+
+    /// Runs on main in output order, including across reattachment. Defer teardown and completion callbacks.
+    public func enqueueSurfaceOperation(_ operation: @escaping @Sendable (ghostty_surface_t) -> Void) {
+        surfaceAccess.enqueueSurfaceOperation(operation)
     }
 
     // MARK: - Viewport Read
@@ -272,7 +294,9 @@ public final class InMemoryTerminalSession: @unchecked Sendable {
             columns: cols,
             rows: rows,
             widthPixels: widthPx,
-            heightPixels: heightPx
+            heightPixels: heightPx,
+            cellWidthPixels: cols > 0 ? widthPx / UInt32(cols) : 0,
+            cellHeightPixels: rows > 0 ? heightPx / UInt32(rows) : 0
         ))
     }
 

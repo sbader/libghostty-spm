@@ -9,6 +9,11 @@ import Combine
 import Foundation
 import GhosttyKit
 import SwiftUI
+#if canImport(UIKit)
+    import UIKit
+#elseif canImport(AppKit)
+    import AppKit
+#endif
 
 @MainActor
 public final class TerminalViewState: ObservableObject {
@@ -55,6 +60,14 @@ public final class TerminalViewState: ObservableObject {
     /// (the default) instantiates the base class. Read once, when the
     /// surface view is made: set it before the surface first appears.
     public var makePlatformView: (@MainActor () -> TerminalView)?
+
+    #if canImport(UIKit)
+        public var makePlatformContainer: (@MainActor (TerminalView, TerminalViewState) -> UIView)?
+        public var updatePlatformContainer: (@MainActor (UIView, TerminalViewState) -> Void)?
+    #elseif canImport(AppKit)
+        public var makePlatformContainer: (@MainActor (TerminalView, TerminalViewState) -> NSView)?
+        public var updatePlatformContainer: (@MainActor (NSView, TerminalViewState) -> Void)?
+    #endif
     private var pendingFocusRequest = false
     var pendingPublishes = TerminalPendingPublishes()
 

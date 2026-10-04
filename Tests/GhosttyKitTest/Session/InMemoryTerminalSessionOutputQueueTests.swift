@@ -198,3 +198,75 @@ private final class LockedValues<Value: Sendable>: @unchecked Sendable {
         lock.unlock()
     }
 }
+
+extension InMemoryTerminalSessionOutputQueueTests {
+    @MainActor @Test
+    func hostStateOperationsRunOnMainBetweenOutput() {
+        let events = LockedValues<String>()
+        let access = InMemoryTerminalSurfaceAccess(
+            write: { _, data in events.append(String(decoding: data, as: UTF8.self)) },
+            processExit: { _, _, _ in }, tick: { _ in }
+        )
+        access.setSurface(testSurface(1))
+        access.enqueueWrite(Data("before".utf8))
+        access.enqueueSurfaceOperation { _ in
+            #expect(Thread.isMainThread)
+            events.append("restore")
+        }
+        access.enqueueWrite(Data("after".utf8))
+        #expect(access.waitForPendingOutput())
+        #expect(events.values == ["before", "restore", "after"])
+    }
+
+    @MainActor @Test
+    func pendingHostStateWaitsForAReplacementSurface() {
+        let events = LockedValues<Int>()
+        let access = InMemoryTerminalSurfaceAccess(
+            write: { _, _ in }, processExit: { _, _, _ in }, tick: { _ in }
+        )
+        access.setSurface(testSurface(1))
+        access.enqueueSurfaceOperation { surface in events.append(Int(bitPattern: surface)) }
+        #expect(access.clearSurface(ifMatches: testSurface(1)))
+        #expect(!access.waitForPendingOutput())
+        access.setSurface(testSurface(2))
+        #expect(access.waitForPendingOutput())
+        #expect(events.values == [2])
+    }
+}
+
+extension InMemoryTerminalSessionOutputQueueTests {
+    @MainActor @Test
+    func reentrantDrainDoesNotRepeatMainOperation() {
+        let events = LockedValues<String>()
+        let access = InMemoryTerminalSurfaceAccess(
+            write: { _, data in events.append(String(decoding: data, as: UTF8.self)) },
+            processExit: { _, _, _ in }, tick: { _ in }
+        )
+        access.setSurface(testSurface(1))
+        access.enqueueSurfaceOperation { _ in
+            events.append("operation")
+            #expect(!access.waitForPendingOutput())
+        }
+        access.enqueueWrite(Data("after".utf8))
+        #expect(access.waitForPendingOutput())
+        #expect(events.values == ["operation", "after"])
+    }
+
+    @Test
+    func configuresEachSurfaceBeforeQueuedOutput() {
+        let events = LockedValues<String>()
+        let session = InMemoryTerminalSession(
+            write: { _ in }, resize: { _ in },
+            surfaceWrite: { surface, _ in events.append("write:\(Int(bitPattern: surface))") },
+            configureSurface: { surface in events.append("configure:\(Int(bitPattern: surface))") }
+        )
+        session.receive("first")
+        session.setSurface(testSurface(1))
+        #expect(session.waitForPendingOutput())
+        session.clearSurface(ifMatches: testSurface(1))
+        session.receive("second")
+        session.setSurface(testSurface(2))
+        #expect(session.waitForPendingOutput())
+        #expect(events.values == ["configure:1", "write:1", "configure:2", "write:2"])
+    }
+}

@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.repository == 'Lakr233/libghostty-spm'
     name: Deploy GitHub Pages
     runs-on: ubuntu-latest
     environment:

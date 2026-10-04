@@ -99,6 +99,7 @@
 
         private func suspendForBackground() {
             stopMomentumScrolling(sendTerminalEndEvent: false)
+            nativeScrollHost?.stopScrolling()
             dismissTouchSelection()
             #if !targetEnvironment(macCatalyst)
                 stopKeyRepeat()
@@ -179,6 +180,7 @@
                 // The momentum link retains this view and would keep
                 // scrolling a detached surface until the fling decays.
                 stopMomentumScrolling(sendTerminalEndEvent: false)
+                nativeScrollHost?.stopScrolling()
                 core.stopDisplayLink()
             }
         }

@@ -40,6 +40,8 @@
         static let touchScrollMultiplier: CGFloat = 3.0
 
         @objc func handleScrollWheelGesture(_ gesture: UIPanGestureRecognizer) {
+            guard nativeScrollHost?.isScrollEnabled != true else { return }
+            defer { nativeScrollHost?.updateScrollRouting() }
             guard pointer.session.reported == nil else { return }
             switch gesture.state {
             case .began:
@@ -82,6 +84,8 @@
         @objc func handleTouchScrollGesture(
             _ gesture: UIPanGestureRecognizer
         ) {
+            guard nativeScrollHost?.isScrollEnabled != true else { return }
+            defer { nativeScrollHost?.updateScrollRouting() }
             #if !targetEnvironment(macCatalyst)
                 if usesInlineTextSelection {
                     if gesture.state == .began {

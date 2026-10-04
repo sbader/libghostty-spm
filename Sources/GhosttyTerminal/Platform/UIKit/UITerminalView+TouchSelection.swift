@@ -85,7 +85,9 @@
             // Touch selection owns its highlight; never synthesize mouse events
             // (even Shift can be captured by a TUI).
             _ = surface.performBindingAction("clear_selection")
+            guard surface.selectCells(range) else { return }
             touchSelection.range = range
+            nativeScrollHost?.updateScrollRouting()
             touchSelection.grid = grid
             touchSelection.surface = surface
             touchSelection.text = text
@@ -105,6 +107,7 @@
                 return
             }
             stopMomentumScrolling()
+            if touchSelection.range != nil { touchSelection.surface?.clearTrackedSelection() }
             touchSelection.scrollTask?.cancel()
             touchSelection.scrollTask = nil
             touchSelection.overlay?.removeFromSuperview()
@@ -118,6 +121,7 @@
             touchSelection.endpoint = nil
             touchSelection.pivot = nil
             touchSelection.panUsesSelection = false
+            nativeScrollHost?.updateScrollRouting()
             if #available(iOS 16.0, *), touchSelection.enabled {
                 selectionEditMenuInteraction.dismissMenu()
             } else if touchSelection.enabled {
@@ -126,6 +130,7 @@
         }
 
         func refreshTouchSelection() {
+            guard reconcileTrackedSelection() else { return }
             guard let range = touchSelection.range, var grid = touchSelection.grid else { return }
             guard surface === touchSelection.surface, let metrics = surface?.size(),
                   Int(metrics.columns) == grid.columns,
@@ -161,6 +166,7 @@
         }
 
         func copyTouchSelection() -> Bool {
+            guard reconcileTrackedSelection(forceValidation: true) else { return false }
             guard let range = touchSelection.range, let grid = touchSelection.grid,
                   let text = surface?.readCells(range, columns: grid.columns)?.text,
                   text == touchSelection.text, !text.isEmpty

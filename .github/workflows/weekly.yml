@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   update:
+    if: github.repository == 'Lakr233/libghostty-spm'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:

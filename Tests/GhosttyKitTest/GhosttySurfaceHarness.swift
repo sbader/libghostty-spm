@@ -14,13 +14,13 @@ final class GhosttySurfaceHarness {
     private static var isOccupied = false
     private static var waiters: [CheckedContinuation<Void, Never>] = []
 
-    static func make() async -> GhosttySurfaceHarness {
+    static func make(hostAuthoritativeResize: Bool = false) async -> GhosttySurfaceHarness {
         if isOccupied {
             await withCheckedContinuation { waiters.append($0) }
         } else {
             isOccupied = true
         }
-        return GhosttySurfaceHarness()
+        return GhosttySurfaceHarness(hostAuthoritativeResize: hostAuthoritativeResize)
     }
 
     /// Hands the turn straight to the next waiter, so it stays occupied.
@@ -38,11 +38,24 @@ final class GhosttySurfaceHarness {
     private let outbound = LockedBytes()
     private var holdsTurn = true
 
-    private init() {
+    private init(hostAuthoritativeResize: Bool) {
         let outbound = outbound
         session = InMemoryTerminalSession(
             write: { outbound.append($0) },
-            resize: { _ in }
+            resize: { _ in },
+            configureSurface: { surface in
+                ghostty_surface_set_host_authoritative_resize(surface, hostAuthoritativeResize)
+            },
+            receiveOutput: { surface, data in
+                data.withUnsafeBytes { buffer in
+                    guard let pointer = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                    if hostAuthoritativeResize {
+                        ghostty_surface_write_buffer_restoration(surface, pointer, UInt(buffer.count))
+                    } else {
+                        ghostty_surface_write_buffer(surface, pointer, UInt(buffer.count))
+                    }
+                }
+            }
         )
         platformView.wantsLayer = true
         coordinator.isAttached = { true }
@@ -62,6 +75,8 @@ final class GhosttySurfaceHarness {
             Issue.record("surface must build for the harness")
         }
     }
+
+    var outboundBytes: Data { outbound.bytes }
 
     var surface: TerminalSurface? {
         coordinator.surface

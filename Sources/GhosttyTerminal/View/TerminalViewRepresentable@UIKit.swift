@@ -14,27 +14,29 @@
             Coordinator()
         }
 
-        func makeUIView(context viewContext: Context) -> TerminalView {
+        func makeUIView(context viewContext: Context) -> UIView {
             let view = context.makePlatformView?() ?? TerminalView(frame: .zero)
             configureView(view, initial: true)
             viewContext.coordinator.attach(to: view, focusBinding: focusBinding)
             Self.synchronizeFocus(view, with: focusBinding)
-            return view
+            return context.makePlatformContainer?(view, context) ?? view
         }
 
-        func updateUIView(_ view: TerminalView, context viewContext: Context) {
+        func updateUIView(_ container: UIView, context viewContext: Context) {
+            guard let view = viewContext.coordinator.view else { return }
             configureView(view, initial: false)
+            context.updatePlatformContainer?(container, context)
             viewContext.coordinator.attach(to: view, focusBinding: focusBinding)
             Self.synchronizeFocus(view, with: focusBinding)
         }
 
-        static func dismantleUIView(_: TerminalView, coordinator: Coordinator) {
+        static func dismantleUIView(_: UIView, coordinator: Coordinator) {
             coordinator.detach()
         }
 
         @MainActor
         final class Coordinator {
-            private weak var view: TerminalView?
+            fileprivate var view: TerminalView?
             private var focusBinding: TerminalFocusBinding?
 
             func attach(

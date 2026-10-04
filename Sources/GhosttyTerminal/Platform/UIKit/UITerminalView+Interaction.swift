@@ -37,9 +37,10 @@
             #if targetEnvironment(macCatalyst)
                 becomeFirstResponder()
             #else
-                if momentumScroll.displayLink != nil {
+                if momentumScroll.displayLink != nil || nativeScrollHost?.isDecelerating == true {
                     // A touch during momentum is a scroll-stop, not a tap.
                     stopMomentumScrolling()
+                    nativeScrollHost?.stopScrolling()
                     softwareKeyboard.tapCandidateArmed = false
                 } else if let touch = touches.first,
                           // View-scoped on purpose: `allTouches` spans the
@@ -130,10 +131,12 @@
         func setupPlatformInput() {
             addInteraction(selectionContextMenuInteraction)
             setupDropInput()
-            addGestureRecognizer(TerminalScrollWheelGestureRecognizer(
+            let wheel = TerminalScrollWheelGestureRecognizer(
                 target: self,
                 action: #selector(handleScrollWheelGesture(_:))
-            ))
+            )
+            addGestureRecognizer(wheel)
+            scrollInputRecognizers.append(wheel)
             let pointerInteraction = UIPointerInteraction(delegate: self)
             addInteraction(pointerInteraction)
             pointer.pointerInteraction = pointerInteraction
@@ -160,6 +163,7 @@
                 gesture.maximumNumberOfTouches = 1
                 gesture.delegate = self
                 addGestureRecognizer(gesture)
+                scrollInputRecognizers.append(gesture)
                 touchSelection.scrollGesture = gesture
 
                 let longPress = UILongPressGestureRecognizer(
@@ -242,8 +246,10 @@
             if usesInlineTextSelection, gestureRecognizer === touchSelection.tapRecognizers.first {
                 touchSelection.tapBeganWithMenu = isTouchMenuVisible
                 touchSelection.tapStopsMomentum = momentumScroll.displayLink != nil
+                    || nativeScrollHost?.isDecelerating == true
                 if touchSelection.tapStopsMomentum {
                     stopMomentumScrolling()
+                    nativeScrollHost?.stopScrolling()
                 }
             }
             return true

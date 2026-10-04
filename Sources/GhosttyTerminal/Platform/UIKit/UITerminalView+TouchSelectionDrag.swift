@@ -55,6 +55,7 @@
             }
             guard updated != range else { return }
             guard let text = surface.readCells(updated, columns: grid.columns)?.text else { return }
+            guard surface.selectCells(updated) else { return }
             touchSelection.range = updated
             touchSelection.text = text
             touchSelection.overlay?.update(grid: grid, range: updated, offset: touchViewportOffset)

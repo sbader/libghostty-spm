@@ -63,6 +63,8 @@ struct InMemoryTerminalPendingOperationsTests {
             String(decoding: data, as: UTF8.self)
         case let .processExit(exitCode, _)?:
             "exit:\(exitCode)"
+        case .surface?:
+            "surface"
         case nil:
             nil
         }

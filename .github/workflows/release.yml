@@ -133,6 +133,11 @@ jobs:
       - name: Test XCFramework Consumer
         run: ./Script/test-xcframework-consumer.sh "$PWD/BinaryTarget/GhosttyKit.xcframework"
 
+      - name: Verify Fork XCFramework
+        run: |
+          bash ./Patches/local/build-support/0001-artifact-and-replay-support.sh "$PWD"
+          ./Script/verify-xcframework.sh "$PWD/BinaryTarget/GhosttyKit.xcframework"
+
       - name: Use Local Binary Target
         run: cp Package.local.swift Package.swift
 
