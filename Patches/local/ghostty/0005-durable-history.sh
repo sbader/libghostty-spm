@@ -9,8 +9,8 @@ from pathlib import Path
 from anchored_edit import Source
 root, support = sys.argv[1:]
 
-def replace_owned_block(src, filename, anchor, label, start):
-    body = Path(support, filename).read_text().rstrip() + '\n'
+def replace_owned_block(src, filename, anchor, label, start, body=None, declaration_pattern=None):
+    body = (body if body is not None else Path(support, filename).read_text()).rstrip() + '\n'
     begin = f'// BEGIN sandbox-station durable-history {label} v1\n'
     end = f'// END sandbox-station durable-history {label}\n'
     src.expect_count(anchor, 1)
@@ -20,7 +20,7 @@ def replace_owned_block(src, filename, anchor, label, start):
     positions = [position for position in positions if position >= 0]
     offset = min(positions) if positions else boundary
     old = src.text[offset:boundary]
-    declarations = re.compile(r'^(?:(?:pub )?(?:const|fn) (\w+)|test "([^"\n]+)")', re.M)
+    declarations = re.compile(declaration_pattern or r'^(?:(?:pub )?(?:const|fn) (\w+)|test "([^"\n]+)")', re.M)
     expected = set(declarations.findall(body))
     legacy = re.sub(
         rf'^// BEGIN sandbox-station durable-history {label} v\d+\n.*?^// END sandbox-station durable-history {label}\n',
@@ -101,18 +101,29 @@ pub fn reset(terminal_: Terminal)''')
 src.save()
 src = Source(root, 'src/terminal/c/main.zig')
 src.insert_after('pub const terminal_vt_write = terminal.vt_write;\n', 'pub const terminal_history_set_callback = terminal.history_set_callback;\npub const terminal_history_finish = terminal.history_finish;\n')
+src.insert_after('pub const terminal_history_finish = terminal.history_finish;\n', 'pub const terminal_history_frontier = terminal.history_frontier;\n')
 src.save()
 src = Source(root, 'src/lib_vt.zig')
 src.insert_after('        @export(&c.terminal_vt_write, .{ .name = \"ghostty_terminal_vt_write\" });\n', '''        @export(&c.terminal_history_set_callback, .{ .name = \"ghostty_terminal_history_set_callback\" });
         @export(&c.terminal_history_finish, .{ .name = \"ghostty_terminal_history_finish\" });
 ''')
 src.save()
+src = Source(root, 'src/lib_vt.zig')
+src.insert_after('        @export(&c.terminal_history_finish, .{ .name = "ghostty_terminal_history_finish" });\n', '        @export(&c.terminal_history_frontier, .{ .name = "ghostty_terminal_history_frontier" });\n')
+src.save()
 src = Source(root, 'include/ghostty/vt/terminal.h')
-src.insert_before('GHOSTTY_API void ghostty_terminal_vt_write(', '''typedef struct {
+replace_owned_block(
+    src, None, 'GHOSTTY_API void ghostty_terminal_vt_write(', 'header',
+    'typedef struct {\n  uint64_t fragment_id;\n',
+    declaration_pattern=r'^} (\w+);|^GHOSTTY_API \w+ (\w+)\b|^typedef .*?\(\*(\w+)\)',
+    body='''typedef struct {
   uint64_t fragment_id;
   uint64_t line_id;
   const uint8_t* data;
   size_t len;
+  const uint8_t* layout;
+  size_t layout_len;
+  uint16_t semantic_columns;
   uint16_t columns;
   uint16_t start_column;
   bool row_end;
@@ -126,6 +137,19 @@ GHOSTTY_API GhosttyResult ghostty_terminal_history_set_callback(
     GhosttyTerminal, GhosttyHistoryFn, void*);
 GHOSTTY_API GhosttyResult ghostty_terminal_history_finish(GhosttyTerminal);
 
-''')
+typedef struct {
+  uint64_t next_fragment_id;
+  uint64_t line_id;
+  uint64_t boundary_row;
+  uint64_t total_rows;
+  uint64_t active_rows;
+  uint16_t boundary_column;
+  bool finished;
+} GhosttyHistoryFrontier;
+
+GHOSTTY_API GhosttyResult ghostty_terminal_history_frontier(
+    GhosttyTerminal, GhosttyHistoryFrontier*);
+''',
+)
 src.save()
 PY
