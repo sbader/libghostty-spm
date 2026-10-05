@@ -151,6 +151,44 @@ src.replace(
     try testing.expect(zt.modes.get(.synchronized_output));
 """,
 )
+src.replace(
+    r"""    // Resize and reset turn the mode off and end the hold.
+    const begin = "\x1b[?2026h";
+    S.len = 0;
+    vt_write(t, begin, begin.len);
+    try testing.expectEqual(Result.success, resize(t, 80, 24, 9, 18));
+    vt_write(t, begin, begin.len);
+    reset(t);
+    reset(t);
+    try testing.expectEqualSlices(bool, &.{ true, false, true, false }, S.events[0..S.len]);
+""",
+    r"""    // Resizes preserve the program's hold until it explicitly ends the frame.
+    const begin = "\x1b[?2026h";
+    const end = "\x1b[?2026l";
+    S.len = 0;
+    vt_write(t, begin, begin.len);
+    try testing.expectEqual(Result.success, resize(t, 80, 24, 9, 18));
+    try testing.expect(t.?.terminal.modes.get(.synchronized_output));
+    try testing.expectEqualSlices(bool, &.{true}, S.events[0..S.len]);
+    try testing.expectEqual(Result.success, resize(t, 100, 30, 9, 18));
+    vt_write(t, begin, begin.len);
+    try testing.expect(t.?.terminal.modes.get(.synchronized_output));
+    try testing.expectEqualSlices(bool, &.{true}, S.events[0..S.len]);
+    vt_write(t, end, end.len);
+    try testing.expect(!t.?.terminal.modes.get(.synchronized_output));
+    try testing.expectEqualSlices(bool, &.{ true, false }, S.events[0..S.len]);
+    vt_write(t, end, end.len);
+    try testing.expectEqualSlices(bool, &.{ true, false }, S.events[0..S.len]);
+
+    S.len = 0;
+    vt_write(t, begin, begin.len);
+    reset(t);
+    try testing.expect(!t.?.terminal.modes.get(.synchronized_output));
+    try testing.expectEqualSlices(bool, &.{ true, false }, S.events[0..S.len]);
+    reset(t);
+    try testing.expectEqualSlices(bool, &.{ true, false }, S.events[0..S.len]);
+""",
+)
 src.save()
 PY
 
