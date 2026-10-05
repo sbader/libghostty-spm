@@ -9,7 +9,7 @@ const HistoryTestSink = struct {
         const self: *HistoryTestSink = @ptrCast(@alignCast(userdata.?));
         std.debug.assert(fragment.fragment_id == self.next_fragment);
         std.debug.assert(fragment.line_id >= self.last_line);
-        std.debug.assert(fragment.len <= 4096);
+        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
         self.next_fragment += 1;
         self.last_line = fragment.line_id;
         self.max_fragment = @max(self.max_fragment, fragment.len);
@@ -150,7 +150,7 @@ const StyledHistorySink = struct {
 
     fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
         const self: *StyledHistorySink = @ptrCast(@alignCast(userdata.?));
-        std.debug.assert(fragment.len <= 4096);
+        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
         @memcpy(self.bytes[self.used..][0..fragment.len], fragment.data[0..fragment.len]);
         self.used += fragment.len;
         self.max_fragment = @max(self.max_fragment, fragment.len);
@@ -215,4 +215,85 @@ test "durable history preserves wide graphemes across resize" {
     }
     try testing.expectEqual(Result.success, history_finish(t));
     try testing.expectEqual(@as(usize, 300), std.mem.count(u8, sink.bytes[0..sink.used], "👩‍💻"));
+}
+
+const LayoutHistorySink = struct {
+    layout: [8192]u8 = undefined,
+    layout_used: usize = 0,
+    data: [16384]u8 = undefined,
+    data_used: usize = 0,
+    semantic_columns: [16]u16 = @splat(0),
+    rows: usize = 0,
+    max_layout: usize = 0,
+
+    fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
+        const self: *LayoutHistorySink = @ptrCast(@alignCast(userdata.?));
+        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
+        std.debug.assert(fragment.len == 0 or fragment.layout_len == 0);
+        @memcpy(self.layout[self.layout_used..][0..fragment.layout_len], fragment.layout[0..fragment.layout_len]);
+        self.layout_used += fragment.layout_len;
+        @memcpy(self.data[self.data_used..][0..fragment.len], fragment.data[0..fragment.len]);
+        self.data_used += fragment.len;
+        self.semantic_columns[self.rows] = fragment.semantic_columns;
+        self.max_layout = @max(self.max_layout, fragment.layout_len);
+        if (fragment.row_end) self.rows += 1;
+    }
+};
+
+test "durable history layout distinguishes padding explicit spaces and wide cells" {
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 5, 2));
+    defer free(t);
+    var sink: LayoutHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, LayoutHistorySink.receive, &sink));
+    const input = "X界X\r\nX  \r\n";
+    vt_write(t, input, input.len);
+    try testing.expectEqual(Result.success, history_finish(t));
+    try testing.expectEqualSlices(u8, &.{ 0, 1, 2, 0, 0, 0, 0 }, sink.layout[0..sink.layout_used]);
+    try testing.expectEqual(@as(u16, 4), sink.semantic_columns[0]);
+    try testing.expectEqual(@as(u16, 3), sink.semantic_columns[1]);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, sink.data[0..sink.data_used], " "));
+}
+
+test "durable history layout includes wrap spacer and bounded wide rows" {
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 4, 2));
+    defer free(t);
+    var sink: LayoutHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, LayoutHistorySink.receive, &sink));
+    const input = "XXX界\r\n\r\n";
+    vt_write(t, input, input.len);
+    try testing.expectEqual(Result.success, history_finish(t));
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 3, 1, 2 }, sink.layout[0..sink.layout_used]);
+    try testing.expectEqual(@as(u16, 4), sink.semantic_columns[0]);
+    try testing.expectEqual(@as(u16, 2), sink.semantic_columns[1]);
+
+    var wide: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &wide, 5000, 2));
+    defer free(wide);
+    sink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(wide, LayoutHistorySink.receive, &sink));
+    const repeated = "X\x1b[4999b\r\n\r\n";
+    vt_write(wide, repeated, repeated.len);
+    try testing.expectEqual(@as(usize, 5000), sink.layout_used);
+    try testing.expectEqual(@as(usize, 4096), sink.max_layout);
+    try testing.expectEqual(@as(usize, 5000), std.mem.count(u8, sink.data[0..sink.data_used], "X"));
+}
+
+test "durable history frontier survives reset and finalization" {
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 4, 2));
+    defer free(t);
+    var sink: HistoryTestSink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, HistoryTestSink.receive, &sink));
+    var frontier: HistoryFrontier = undefined;
+    const input = "XXXX\r\nXXXX\r\n\x1bc";
+    vt_write(t, input, input.len);
+    try testing.expectEqual(Result.success, history_frontier(t, &frontier));
+    try testing.expectEqual(@as(u64, 0), frontier.boundary_row);
+    try testing.expectEqual(@as(u16, 0), frontier.boundary_column);
+    try testing.expectEqual(Result.success, history_finish(t));
+    try testing.expectEqual(Result.success, history_frontier(t, &frontier));
+    try testing.expect(frontier.finished);
+    try testing.expectEqual(frontier.total_rows, frontier.boundary_row);
 }
