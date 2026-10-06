@@ -231,19 +231,19 @@ The package downloads a pre-built XCFramework. To rebuild libghostty from the Gh
 ```
 
 `build.sh` forwards to `Script/build.sh`. Without `--source` it clones Ghostty
-into `References/ghostty-upstream`; `--ref` checks out a tag or commit there
+into `.build/local/ghostty-upstream`; `--ref` checks out a tag or commit there
 (`Ghostty.ref` is the commit the shipped asset was built from). It applies the
 patches in `Patches/ghostty/`, builds each platform group (`macos`, `ios`,
 `maccatalyst`, `visionos` by default; macOS, Catalyst, and simulator slices
 are arm64 and x86_64), assembles `BinaryTarget/GhosttyKit.xcframework` and
-`build/GhosttyKit.xcframework.zip`, and runs `Script/test.sh` and `swift test`
+`.build/local/GhosttyKit.xcframework.zip`, and runs `Script/test.sh` and `swift test`
 against the result unless `--skip-tests` is given. `Package.local.swift`
 points the binary target at that local `BinaryTarget/` build; `--download-url`
 regenerates `Package.swift` from `Package.swift.template` for an uploaded zip.
 
 The `visionos` group builds against a patched copy of the Zig standard
 library only when `Patches/zig/` holds a patch for the Zig on PATH (staged
-under `build/cache` by `Script/prepare-zig-lib.sh`; the toolchain itself is
+under `.build/local/cache` by `Script/prepare-zig-lib.sh`; the toolchain itself is
 never modified). Zig 0.16.0 needs none. Xcode 27 needs the Metal toolchain
 component installed (`xcodebuild -downloadComponent MetalToolchain`). An SDK
 overlay script lived under `Script/support/` for Zig 0.15.2, which could not

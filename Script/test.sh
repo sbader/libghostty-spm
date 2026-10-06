@@ -17,7 +17,7 @@ format_output() {
 
 # One derived-data root for every destination, so the binary target a remote
 # manifest downloads can be inspected after the first build.
-DERIVED_DATA="${LIBGHOSTTY_DERIVED_DATA:-$(pwd)/build/DerivedData}"
+DERIVED_DATA="${LIBGHOSTTY_DERIVED_DATA:-$(pwd)/.build/local/DerivedData}"
 
 test_build() {
     local scheme="$1"
