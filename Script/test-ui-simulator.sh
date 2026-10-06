@@ -28,7 +28,7 @@ cd "$(dirname "$0")/.."
 LABEL=${1:?Usage: test-ui-simulator.sh <iPhone|iPad> <result-bundle-prefix>}
 RESULT_PREFIX=${2:?Usage: test-ui-simulator.sh <iPhone|iPad> <result-bundle-prefix>}
 TEST_CLASS=MobileGhosttyAppUITests/MobileGhosttyAppUITests
-DERIVED_DATA="${LIBGHOSTTY_DERIVED_DATA:-$(pwd)/build/UITestDerivedData}"
+DERIVED_DATA="${LIBGHOSTTY_DERIVED_DATA:-$(pwd)/.build/local/UITestDerivedData}"
 HARDWARE_KEY_TESTS=(
     testInlineLongPressSelectionCopiesWithKeyboard
     testInlineSelectionSwitchesBetweenTouchPointerAndKeyboard

@@ -23,9 +23,9 @@ Options:
   -h, --help               Show this help.
 
 Notes:
-  - Default source path is ./References/ghostty-upstream
+  - Default source path is ./.build/local/ghostty-upstream
   - This builds real per-target static archives, then assembles
-    BinaryTarget/GhosttyKit.xcframework and build/GhosttyKit.xcframework.zip
+    BinaryTarget/GhosttyKit.xcframework and .build/local/GhosttyKit.xcframework.zip
   - Upstream Ghostty patches from ./Patches/ghostty are applied automatically
   - Current verified groups: macos, ios, maccatalyst, visionos
     (visionos builds against a patched copy of the Zig std, see Patches/zig)
@@ -34,7 +34,7 @@ EOF
 }
 
 ROOT_DIR=$(pwd)
-SOURCE_DIR="$ROOT_DIR/References/ghostty-upstream"
+SOURCE_DIR="$ROOT_DIR/.build/local/ghostty-upstream"
 PLATFORMS="macos,ios,maccatalyst,visionos"
 DOWNLOAD_URL=${DOWNLOAD_URL:-}
 GHOSTTY_REF=
@@ -96,9 +96,9 @@ if [ -n "$GHOSTTY_REF" ]; then
     git -C "$SOURCE_DIR" checkout "$GHOSTTY_REF"
 fi
 
-ARTIFACTS_DIR="$ROOT_DIR/build/artifacts"
+ARTIFACTS_DIR="$ROOT_DIR/.build/local/artifacts"
 XCFRAMEWORK_PATH="$ROOT_DIR/BinaryTarget/GhosttyKit.xcframework"
-XCFRAMEWORK_ZIP="$ROOT_DIR/build/GhosttyKit.xcframework.zip"
+XCFRAMEWORK_ZIP="$ROOT_DIR/.build/local/GhosttyKit.xcframework.zip"
 
 rm -rf "$ARTIFACTS_DIR" "$XCFRAMEWORK_PATH" "$XCFRAMEWORK_ZIP"
 mkdir -p "$ARTIFACTS_DIR" "$(dirname "$XCFRAMEWORK_PATH")"
