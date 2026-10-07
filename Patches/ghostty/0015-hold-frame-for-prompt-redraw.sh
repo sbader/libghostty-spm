@@ -742,6 +742,8 @@ src.insert_after(
                     return;
                 }
 """,
+    # Local frame submission adds a condition to the check.
+    marker='                    log.debug("prompt redraw pending, skipping render", .{});\n',
 )
 src.save()
 PY

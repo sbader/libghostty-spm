@@ -11,12 +11,12 @@ root, support = sys.argv[1:]
 
 def replace_owned_block(src, filename, anchor, label, start, body=None, declaration_pattern=None):
     body = (body if body is not None else Path(support, filename).read_text()).rstrip() + '\n'
-    begin = f'// BEGIN sandbox-station durable-history {label} v1\n'
+    begin = f'// BEGIN sandbox-station durable-history {label} v2\n'
     end = f'// END sandbox-station durable-history {label}\n'
     src.expect_count(anchor, 1)
     boundary = src.text.index(anchor)
     prefix = src.text[:boundary]
-    positions = [prefix.find(start), prefix.find(begin.split(' v1')[0])]
+    positions = [prefix.find(start), prefix.find(begin.split(' v2')[0])]
     positions = [position for position in positions if position >= 0]
     offset = min(positions) if positions else boundary
     old = src.text[offset:boundary]
@@ -69,21 +69,23 @@ src.save()
 src = Source(root, 'src/terminal/Screen.zig')
 src.replace('    if (self.no_scrollback) {\n', '    if (self.no_scrollback and self.pages.history_observer == null) {\n')
 src.save()
-src = Source(root, 'src/terminal/formatter.zig')
-src.insert_after('    trim: bool = true,\n', '    preserve_blank_rows: bool = false,\n')
-src.replace('            if (!Cell.hasTextAny(cells_subset)) {', '            if (!self.opts.preserve_blank_rows and !Cell.hasTextAny(cells_subset)) {')
-src.save()
 src = Source(root, 'src/terminal/c/terminal.zig')
-src.insert_after('    effects: Effects = .{},\n', '    history: ?History = null,\n')
+if '    history: ?History = null,\n' in src.text:
+    src.replace('    history: ?History = null,\n', '    history: ?*History = null,\n')
+src.insert_after('    effects: Effects = .{},\n', '    history: ?*History = null,\n')
 replace_owned_block(src, 'terminal-history.zig', 'pub fn vt_write(\n', 'native', 'pub const HistoryFragment = extern struct {\n')
 replace_owned_block(src, 'terminal-history-tests.zig', 'test \"new/free\" {\n', 'tests', 'const HistoryTestSink = struct {\n')
 src.insert_after('    wrapper.stream.nextSlice(ptr[0..len]);\n', '    historyFlush(wrapper, 0);\n', marker='    wrapper.stream.nextSlice(ptr[0..len]);\n    historyFlush(wrapper, 0);\n')
-src.insert_before('    for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;\n', '''    if (wrapper.history) |history| {
+free_block = '''    if (wrapper.history) |history| {
         const pages = &t.screens.get(.primary).?.pages;
         pages.history_observer = null;
         pages.untrackPin(history.boundary);
+        alloc.destroy(history);
     }
-''', marker='        pages.untrackPin(history.boundary);\n')
+'''
+if '        pages.untrackPin(history.boundary);\n    }\n' in src.text:
+    src.replace('        pages.untrackPin(history.boundary);\n    }\n', '        pages.untrackPin(history.boundary);\n        alloc.destroy(history);\n    }\n')
+src.insert_before('    for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;\n', free_block, marker='        alloc.destroy(history);\n')
 src.replace('''        error.OutOfMemory => .out_of_memory,
     };
 
@@ -121,15 +123,14 @@ replace_owned_block(
   uint64_t line_id;
   const uint8_t* data;
   size_t len;
-  const uint8_t* layout;
-  size_t layout_len;
-  uint16_t semantic_columns;
   uint16_t columns;
   uint16_t start_column;
-  bool row_end;
-  bool line_end;
+  uint16_t cells;
+  uint8_t flags;
 } GhosttyHistoryFragment;
 
+// One archived row: data is the history row payload; flags bit 0 marks a
+// soft wrap into the next row, bit 1 a wide character continued there.
 // Callback return acknowledges durable storage. Block on storage failure.
 // Data is borrowed; no terminal API may run concurrently or reentrantly.
 typedef void (*GhosttyHistoryFn)(void*, const GhosttyHistoryFragment*);

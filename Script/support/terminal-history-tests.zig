@@ -3,20 +3,124 @@ const HistoryTestSink = struct {
     next_fragment: u64 = 1,
     last_line: u64 = 1,
     rows: usize = 0,
-    max_fragment: usize = 0,
 
     fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
         const self: *HistoryTestSink = @ptrCast(@alignCast(userdata.?));
         std.debug.assert(fragment.fragment_id == self.next_fragment);
         std.debug.assert(fragment.line_id >= self.last_line);
-        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
+        std.debug.assert(fragment.start_column <= fragment.cells and fragment.cells <= fragment.columns);
         self.next_fragment += 1;
         self.last_line = fragment.line_id;
-        self.max_fragment = @max(self.max_fragment, fragment.len);
-        for (fragment.data[0..fragment.len]) |byte| {
-            if (byte == 'X') self.x_count += 1;
+        const row = HistoryTestRow.decode(fragment);
+        self.x_count += std.mem.count(u8, row.text(), "X");
+        self.rows += 1;
+    }
+};
+
+/// Decodes a history row payload, failing the test on any malformed field.
+const HistoryTestRow = struct {
+    payload: []const u8,
+    wide: [64]usize = undefined,
+    wide_count: usize = 0,
+    text_start: usize = 0,
+    text_end: usize = 0,
+    graphemes: usize = 0,
+    grapheme_codepoints: [8]u32 = undefined,
+    styles: [8][4]u64 = undefined,
+    style_count: usize = 0,
+    links: [4][]const u8 = undefined,
+    link_ids: [4][]const u8 = undefined,
+    link_count: usize = 0,
+    runs: [16][3]usize = undefined,
+    run_count: usize = 0,
+    position: usize = 0,
+    flags: u8 = 0,
+    start: usize = 0,
+    cells: usize = 0,
+
+    fn varint(self: *HistoryTestRow) u64 {
+        var value: u64 = 0;
+        var shift: u6 = 0;
+        while (true) {
+            const b = self.payload[self.position];
+            self.position += 1;
+            value |= @as(u64, b & 0x7f) << shift;
+            if (b & 0x80 == 0) return value;
+            shift += 7;
         }
-        if (fragment.row_end) self.rows += 1;
+    }
+
+    fn color(self: *HistoryTestRow) u64 {
+        const tag = self.payload[self.position];
+        self.position += 1;
+        return switch (tag) {
+            0 => 0,
+            1 => blk: {
+                self.position += 1;
+                break :blk (@as(u64, 1) << 32) | @as(u64, self.payload[self.position - 1]);
+            },
+            2 => blk: {
+                self.position += 3;
+                break :blk (@as(u64, 2) << 32) | @as(u64, std.mem.readInt(u24, self.payload[self.position - 3 ..][0..3], .big));
+            },
+            else => unreachable,
+        };
+    }
+
+    fn decode(fragment: *const HistoryFragment) HistoryTestRow {
+        var row: HistoryTestRow = .{ .payload = fragment.data[0..fragment.len], .flags = fragment.flags, .start = fragment.start_column, .cells = fragment.cells };
+        row.wide_count = row.varint();
+        var column: usize = fragment.start_column;
+        for (0..row.wide_count) |index| {
+            column += row.varint();
+            if (index < row.wide.len) row.wide[index] = column;
+        }
+        const text_len = row.varint();
+        row.text_start = row.position;
+        row.position += text_len;
+        row.text_end = row.position;
+        std.debug.assert(std.unicode.utf8ValidateSlice(row.text()));
+        std.debug.assert(std.unicode.utf8CountCodepoints(row.text()) catch unreachable == fragment.cells - fragment.start_column - row.wide_count);
+        row.graphemes = row.varint();
+        var cp_index: usize = 0;
+        for (0..row.graphemes) |_| {
+            _ = row.varint();
+            const count = row.varint();
+            for (0..count) |_| {
+                const codepoint = row.varint();
+                if (cp_index < row.grapheme_codepoints.len) row.grapheme_codepoints[cp_index] = @intCast(codepoint);
+                cp_index += 1;
+            }
+        }
+        row.style_count = row.varint();
+        for (0..row.style_count) |index| {
+            const flags = row.varint();
+            row.styles[index] = .{ flags, row.color(), row.color(), row.color() };
+        }
+        row.link_count = row.varint();
+        for (0..row.link_count) |index| {
+            const uri_len = row.varint();
+            row.links[index] = row.payload[row.position..][0..uri_len];
+            row.position += uri_len;
+            const id_len = row.varint();
+            row.link_ids[index] = row.payload[row.position..][0..id_len];
+            row.position += id_len;
+        }
+        row.run_count = row.varint();
+        var covered: usize = 0;
+        for (0..row.run_count) |index| {
+            const run: [3]usize = .{ @intCast(row.varint()), @intCast(row.varint()), @intCast(row.varint()) };
+            std.debug.assert(run[1] <= row.style_count and run[2] <= row.link_count);
+            if (index < row.runs.len) row.runs[index] = run;
+            covered += run[0];
+        }
+        std.debug.assert(covered == fragment.cells - fragment.start_column);
+        std.debug.assert(row.position == row.payload.len);
+        return row;
+    }
+
+    fn text(self: *const HistoryTestRow) []const u8 {
+        return self.payload[self.text_start..self.text_end];
     }
 };
 
@@ -143,26 +247,38 @@ test "durable history durable ACK pauses and resumes REP and resize" {
     }
 }
 
-const StyledHistorySink = struct {
-    bytes: [16384]u8 = undefined,
-    used: usize = 0,
-    max_fragment: usize = 0,
+const RecordingHistorySink = struct {
+    payloads: [8][1024]u8 = undefined,
+    fragments: [8]HistoryFragment = undefined,
+    count: usize = 0,
+    euros: usize = 0,
+    max_len: usize = 0,
 
     fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
-        const self: *StyledHistorySink = @ptrCast(@alignCast(userdata.?));
-        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
-        @memcpy(self.bytes[self.used..][0..fragment.len], fragment.data[0..fragment.len]);
-        self.used += fragment.len;
-        self.max_fragment = @max(self.max_fragment, fragment.len);
+        const self: *RecordingHistorySink = @ptrCast(@alignCast(userdata.?));
+        const decoded = HistoryTestRow.decode(fragment);
+        self.euros += std.mem.count(u8, decoded.text(), "€");
+        self.max_len = @max(self.max_len, fragment.len);
+        if (self.count == self.fragments.len) return;
+        const len = @min(fragment.len, self.payloads[self.count].len);
+        @memcpy(self.payloads[self.count][0..len], fragment.data[0..len]);
+        self.fragments[self.count] = fragment.*;
+        self.fragments[self.count].data = &self.payloads[self.count];
+        self.fragments[self.count].len = len;
+        self.count += 1;
+    }
+
+    fn row(self: *const RecordingHistorySink, index: usize) HistoryTestRow {
+        return HistoryTestRow.decode(&self.fragments[index]);
     }
 };
 
-test "durable history preserves styled Unicode across bounded fragments" {
+test "durable history preserves styled Unicode rows" {
     var t: Terminal = null;
     try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 2500, 2));
     defer free(t);
-    var sink: StyledHistorySink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(t, StyledHistorySink.receive, &sink));
+    var sink: RecordingHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, RecordingHistorySink.receive, &sink));
     var input: [8192]u8 = undefined;
     var writer = std.Io.Writer.fixed(&input);
     try writer.writeAll("\x1b[31m");
@@ -170,42 +286,56 @@ test "durable history preserves styled Unicode across bounded fragments" {
     try writer.writeAll("\r\n\r\n");
     vt_write(t, input[0..6].ptr, 6);
     vt_write(t, input[6..writer.end].ptr, writer.end - 6);
-    const data = sink.bytes[0..sink.used];
-    try testing.expectEqual(@as(usize, 2000), std.mem.count(u8, data, "€"));
-    try testing.expectEqual(@as(usize, 4096), sink.max_fragment);
-    try testing.expect(std.unicode.utf8ValidateSlice(data));
-    try testing.expect(std.mem.indexOf(u8, data, "\x1b[") != null);
-    try testing.expect(std.mem.indexOf(u8, data, "\n") == null);
-    try testing.expect(std.mem.indexOf(u8, data, "\r") == null);
+    try testing.expectEqual(@as(usize, 2000), sink.euros);
+    try testing.expect(sink.max_len < 7000);
+    const fragment = sink.fragments[0];
+    try testing.expectEqual(@as(u16, 2000), fragment.cells);
+    try testing.expectEqual(@as(u8, 0), fragment.flags);
 }
 
-test "durable history preserves styled blank cells and final active output" {
+test "durable history records styles, explicit spaces and background cells" {
     var t: Terminal = null;
-    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 4, 2));
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 6, 2));
     defer free(t);
-    var sink: StyledHistorySink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(t, StyledHistorySink.receive, &sink));
-    const blanks = "\x1b[42m    \r\n\r\n";
-    vt_write(t, blanks, blanks.len);
-    try testing.expect(std.mem.indexOf(u8, sink.bytes[0..sink.used], "\x1b[") != null);
-    try testing.expect(std.mem.indexOf(u8, sink.bytes[0..sink.used], "    ") != null);
-    const tail = "\x1b[0mXXX";
-    vt_write(t, tail, tail.len);
-    const before = std.mem.count(u8, sink.bytes[0..sink.used], "X");
-    try testing.expectEqual(@as(usize, 0), before);
+    var sink: RecordingHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, RecordingHistorySink.receive, &sink));
+    const input = "\x1b[1;31mX\x1b[0m  \r\n\x1b[42m    \x1b[0m\r\n\r\n";
+    vt_write(t, input, input.len);
     try testing.expectEqual(Result.success, history_finish(t));
-    try testing.expectEqual(@as(usize, 3), std.mem.count(u8, sink.bytes[0..sink.used], "X"));
-    const finished_size = sink.used;
-    try testing.expectEqual(Result.success, history_finish(t));
-    try testing.expectEqual(finished_size, sink.used);
+    const first = sink.row(0);
+    try testing.expectEqual(@as(usize, 3), first.cells);
+    try testing.expectEqualStrings("X  ", first.text());
+    try testing.expectEqual(@as(usize, 1), first.style_count);
+    try testing.expectEqual(@as(u64, 1), first.styles[0][0]);
+    try testing.expectEqual((@as(u64, 1) << 32) | 1, first.styles[0][1]);
+    try testing.expectEqual(@as(usize, 2), first.run_count);
+    try testing.expectEqual([3]usize{ 1, 1, 0 }, first.runs[0]);
+    try testing.expectEqual([3]usize{ 2, 0, 0 }, first.runs[1]);
+    const second = sink.row(1);
+    try testing.expectEqual(@as(usize, 4), second.cells);
+    try testing.expectEqual(@as(usize, 1), second.style_count);
+    try testing.expectEqual((@as(u64, 1) << 32) | 2, second.styles[0][2]);
+    const third = sink.row(2);
+    try testing.expectEqual(@as(usize, 0), third.cells);
 }
 
 test "durable history preserves wide graphemes across resize" {
     var t: Terminal = null;
     try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 7, 2));
     defer free(t);
-    var sink: StyledHistorySink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(t, StyledHistorySink.receive, &sink));
+    const Sink = struct {
+        bases: usize = 0,
+        graphemes: usize = 0,
+        fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
+            const self: *@This() = @ptrCast(@alignCast(userdata.?));
+            const row = HistoryTestRow.decode(fragment);
+            self.bases += std.mem.count(u8, row.text(), "👩");
+            self.graphemes += row.graphemes;
+            std.debug.assert(row.wide_count == std.mem.count(u8, row.text(), "👩") + std.mem.count(u8, row.text(), "💻"));
+        }
+    };
+    var sink: Sink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, Sink.receive, &sink));
     var input: [4096]u8 = undefined;
     var writer = std.Io.Writer.fixed(&input);
     for (0..300) |_| try writer.writeAll("👩‍💻");
@@ -214,70 +344,50 @@ test "durable history preserves wide graphemes across resize" {
         try testing.expectEqual(Result.success, resize(t, geometry[0], geometry[1], 8, 16));
     }
     try testing.expectEqual(Result.success, history_finish(t));
-    try testing.expectEqual(@as(usize, 300), std.mem.count(u8, sink.bytes[0..sink.used], "👩‍💻"));
+    try testing.expectEqual(@as(usize, 300), sink.bases);
+    try testing.expectEqual(@as(usize, 300), sink.graphemes);
 }
 
-const LayoutHistorySink = struct {
-    layout: [8192]u8 = undefined,
-    layout_used: usize = 0,
-    data: [16384]u8 = undefined,
-    data_used: usize = 0,
-    semantic_columns: [16]u16 = @splat(0),
-    rows: usize = 0,
-    max_layout: usize = 0,
-
-    fn receive(userdata: ?*anyopaque, fragment: *const HistoryFragment) callconv(lib.calling_conv) void {
-        const self: *LayoutHistorySink = @ptrCast(@alignCast(userdata.?));
-        std.debug.assert(fragment.len + fragment.layout_len <= 4096);
-        std.debug.assert(fragment.len == 0 or fragment.layout_len == 0);
-        @memcpy(self.layout[self.layout_used..][0..fragment.layout_len], fragment.layout[0..fragment.layout_len]);
-        self.layout_used += fragment.layout_len;
-        @memcpy(self.data[self.data_used..][0..fragment.len], fragment.data[0..fragment.len]);
-        self.data_used += fragment.len;
-        self.semantic_columns[self.rows] = fragment.semantic_columns;
-        self.max_layout = @max(self.max_layout, fragment.layout_len);
-        if (fragment.row_end) self.rows += 1;
-    }
-};
-
-test "durable history layout distinguishes padding explicit spaces and wide cells" {
-    var t: Terminal = null;
-    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 5, 2));
-    defer free(t);
-    var sink: LayoutHistorySink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(t, LayoutHistorySink.receive, &sink));
-    const input = "X界X\r\nX  \r\n";
-    vt_write(t, input, input.len);
-    try testing.expectEqual(Result.success, history_finish(t));
-    try testing.expectEqualSlices(u8, &.{ 0, 1, 2, 0, 0, 0, 0 }, sink.layout[0..sink.layout_used]);
-    try testing.expectEqual(@as(u16, 4), sink.semantic_columns[0]);
-    try testing.expectEqual(@as(u16, 3), sink.semantic_columns[1]);
-    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, sink.data[0..sink.data_used], " "));
-}
-
-test "durable history layout includes wrap spacer and bounded wide rows" {
+test "durable history records wide cells and wrap spacers" {
     var t: Terminal = null;
     try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 4, 2));
     defer free(t);
-    var sink: LayoutHistorySink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(t, LayoutHistorySink.receive, &sink));
-    const input = "XXX界\r\n\r\n";
+    var sink: RecordingHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, RecordingHistorySink.receive, &sink));
+    const input = "X界X\r\nXXX界\r\n\r\n";
     vt_write(t, input, input.len);
     try testing.expectEqual(Result.success, history_finish(t));
-    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 3, 1, 2 }, sink.layout[0..sink.layout_used]);
-    try testing.expectEqual(@as(u16, 4), sink.semantic_columns[0]);
-    try testing.expectEqual(@as(u16, 2), sink.semantic_columns[1]);
+    const first = sink.row(0);
+    try testing.expectEqual(@as(usize, 4), first.cells);
+    try testing.expectEqual(@as(usize, 1), first.wide_count);
+    try testing.expectEqual(@as(usize, 1), first.wide[0]);
+    try testing.expectEqualStrings("X界X", first.text());
+    const second = sink.row(1);
+    try testing.expectEqual(@as(usize, 3), second.cells);
+    try testing.expectEqual(@as(u8, 3), second.flags);
+    const third = sink.row(2);
+    try testing.expectEqual(@as(usize, 2), third.cells);
+    try testing.expectEqual(@as(u8, 0), third.flags);
+    try testing.expectEqual(@as(usize, 0), third.wide[0]);
+    try testing.expectEqual(sink.fragments[1].line_id, sink.fragments[2].line_id);
+}
 
-    var wide: Terminal = null;
-    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &wide, 5000, 2));
-    defer free(wide);
-    sink = .{};
-    try testing.expectEqual(Result.success, history_set_callback(wide, LayoutHistorySink.receive, &sink));
-    const repeated = "X\x1b[4999b\r\n\r\n";
-    vt_write(wide, repeated, repeated.len);
-    try testing.expectEqual(@as(usize, 5000), sink.layout_used);
-    try testing.expectEqual(@as(usize, 4096), sink.max_layout);
-    try testing.expectEqual(@as(usize, 5000), std.mem.count(u8, sink.data[0..sink.data_used], "X"));
+test "durable history records hyperlinks" {
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 20, 2));
+    defer free(t);
+    var sink: RecordingHistorySink = .{};
+    try testing.expectEqual(Result.success, history_set_callback(t, RecordingHistorySink.receive, &sink));
+    const input = "a\x1b]8;id=7;https://example.test/\x1b\\link\x1b]8;;\x1b\\b\r\n\r\n";
+    vt_write(t, input, input.len);
+    try testing.expectEqual(Result.success, history_finish(t));
+    const row = sink.row(0);
+    try testing.expectEqualStrings("alinkb", row.text());
+    try testing.expectEqual(@as(usize, 1), row.link_count);
+    try testing.expectEqualStrings("https://example.test/", row.links[0]);
+    try testing.expectEqualStrings("7", row.link_ids[0]);
+    try testing.expectEqual(@as(usize, 3), row.run_count);
+    try testing.expectEqual([3]usize{ 4, 0, 1 }, row.runs[1]);
 }
 
 test "durable history frontier survives reset and finalization" {
