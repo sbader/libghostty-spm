@@ -4,8 +4,8 @@ import Foundation
 /// UIKit reports a held key once; the repeat belongs to the text input
 /// system, which the terminal's keys never reach.
 enum TerminalKeyRepeat {
-    /// iPadOS exposes the user's Key Repeat setting to no app, so these
-    /// follow AppKit's defaults.
+    /// Defaults for the view's `keyRepeatDelay` and `keyRepeatInterval`,
+    /// following AppKit's defaults.
     static let initialDelay: TimeInterval = 0.4
     static let interval: TimeInterval = 0.05
 

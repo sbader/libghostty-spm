@@ -2,9 +2,9 @@
 //  TerminalIMEComposition.swift
 //  libghostty-spm
 //
-//  Routing decisions for hardware keys while a composition-based input
-//  method (Chinese, Japanese, Korean) is the active input mode. Pure logic,
-//  kept platform-free so the macOS test suite can pin it.
+//  Routing decisions for hardware keys between the terminal and the text
+//  input system. Pure logic, kept platform-free so the macOS test suite can
+//  pin it.
 //
 
 import Foundation
@@ -22,21 +22,32 @@ enum TerminalIMEComposition {
             || language.hasPrefix("ko")
     }
 
-    /// Whether a hardware key press belongs to the input method rather than
-    /// the terminal.
+    /// Whether a hardware key press belongs to the text input system rather
+    /// than the terminal.
     ///
-    /// With marked text on screen every key is the input method's — it moves
-    /// the composition caret, picks candidates, commits, or cancels. Before
-    /// composition starts, only presses that produce printable text can open
-    /// one; control characters (Return, Tab, Escape…) and function keys keep
-    /// driving the terminal even while a composition input mode is active.
-    static func shouldDeferKey(
+    /// Typed keys go to the terminal: the text input system shows its accent
+    /// menu for a held character key, and a terminal repeats it instead.
+    /// The text input system gets only what needs composing:
+    /// - every key while marked text is on screen — it moves the composition
+    ///   caret, picks candidates, commits, or cancels;
+    /// - a dead key (Option-E on U.S., ´ on German), which reports no
+    ///   characters until the input method composes it;
+    /// - printable keys while a composition input mode is active.
+    /// Control characters (Return, Tab, Escape, Delete…) and function keys
+    /// keep driving the terminal. Ctrl and Cmd combinations are filtered out
+    /// by the caller.
+    static func routesToTextInput(
         characters: String?,
+        charactersIgnoringModifiers: String?,
         hasMarkedText: Bool,
         inputModeUsesComposition: Bool
     ) -> Bool {
         if hasMarkedText { return true }
-        guard inputModeUsesComposition else { return false }
+        if characters?.isEmpty == true, isPrintable(charactersIgnoringModifiers) { return true }
+        return inputModeUsesComposition && isPrintable(characters)
+    }
+
+    private static func isPrintable(_ characters: String?) -> Bool {
         guard
             let text = TerminalInputText.filteredFunctionKeyText(characters),
             !text.isEmpty

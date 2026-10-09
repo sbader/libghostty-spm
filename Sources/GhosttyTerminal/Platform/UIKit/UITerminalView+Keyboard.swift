@@ -23,26 +23,12 @@
         /// both) varies by iPadOS version; whichever runs first claims the
         /// press here.
         var recentKeyCommandDeliveries: Set<String> = []
-        /// Keys loaned to the input method this runloop turn. The text input
-        /// system claims them through any UITextInput mutation; whatever is
-        /// still here when the turn ends is replayed to the surface.
-        var pendingInputMethodKeys: [DeferredInputMethodKey] = []
-        var inputMethodFlushScheduled = false
-        /// Learned once per process — not per view, or every new tab would
-        /// re-calibrate: the text input system ignored a loaned key
-        /// outright, so deferred presses must be forwarded to `super` — the
-        /// route that feeds them to the input method on the iPadOS versions
-        /// that do not process hardware keys on their own.
-        @MainActor static var inputMethodNeedsPressForwarding = false
-        /// Set on the first claim: the input method demonstrably hears our
-        /// keys. From then on an unclaimed forwarded key is never replayed
-        /// raw — the input method's responses arrive asynchronously (they
-        /// round-trip the keyboard daemon), and replaying a key it is still
-        /// composing types it twice.
-        @MainActor static var inputMethodProvenResponsive = false
-        /// Presses currently loaned to the input method; their release must
-        /// not reach the surface (a replay sends its own synthetic pair).
+        /// Presses given to the text input system; the surface never saw
+        /// them, so their release must not reach it.
         var pressesLoanedToInputMethod: Set<UIPress> = []
+        /// Nonzero while `super.pressesBegan` hands presses to the text input
+        /// system, telling UITextInput calls that arrive synchronously apart.
+        var textInputPressDepth = 0
         /// Presses whose began was forwarded to `super`; their ended must
         /// complete there too.
         var pressesForwardedToInputMethod: Set<UIPress> = []
@@ -51,6 +37,8 @@
         var heldModifierFlags: UIKeyModifierFlags = []
         /// The held key being repeated, if any. See `startKeyRepeat`.
         var keyRepeat: KeyRepeat?
+        var keyRepeatDelay = TerminalKeyRepeat.initialDelay
+        var keyRepeatInterval = TerminalKeyRepeat.interval
 
         /// A repeating key: the press, whose release ends the repeat and
         /// whose key each repeat sends, and the timer that sends them.
@@ -75,24 +63,6 @@
         var tapCandidateTimestamp: TimeInterval = 0
     }
 
-    /// A hardware key loaned to the input method, kept ready to replay:
-    /// everything the direct path would have put on the key event.
-    struct DeferredInputMethodKey {
-        let action: ghostty_input_action_e
-        let keycode: UInt32
-        let mods: ghostty_input_mods_e
-        let consumedMods: ghostty_input_mods_e
-        let unshiftedCodepoint: UInt32
-        let text: String?
-        /// The physical press, held for the turn so a calibration flush can
-        /// still hand it to `super` instead of leaking raw text.
-        weak var press: UIPress?
-        /// The press has been given to `super` (at press time or by a
-        /// calibration flush); the next unclaimed flush replays it raw
-        /// rather than retrying forever.
-        var forwardAttempted: Bool
-    }
-
     extension UITerminalView {
         override open func pressesBegan(
             _ presses: Set<UIPress>,
@@ -114,17 +84,17 @@
                     if !TerminalKeyRepeat.isModifier(usage: UInt16(key.keyCode.rawValue)) {
                         stopKeyRepeat()
                     }
-                    if shouldDeferKeyToInputMethod(key) {
+                    // The press must reach `super` within this call, with its
+                    // event: the text input system only interprets the key
+                    // event being delivered.
+                    if routesKeyToTextInput(key) {
                         TerminalDebugLog.log(
                             .input,
-                            "uikit key deferred to input method code=\(key.keyCode.rawValue) marked=\(inputHandler.hasMarkedText) lang=\(textInputMode?.primaryLanguage ?? "nil") forwarding=\(HardwareKeyboardState.inputMethodNeedsPressForwarding)"
+                            "uikit key to text input system code=\(key.keyCode.rawValue) chars=\(TerminalDebugLog.describe(key.characters)) ignoring=\(TerminalDebugLog.describe(key.charactersIgnoringModifiers)) marked=\(inputHandler.hasMarkedText) event=\(event != nil)"
                         )
-                        deferKeyToInputMethod(key, press: press, action: GHOSTTY_ACTION_PRESS)
                         hardwareKeyboard.pressesLoanedToInputMethod.insert(press)
-                        if HardwareKeyboardState.inputMethodNeedsPressForwarding {
-                            hardwareKeyboard.pressesForwardedToInputMethod.insert(press)
-                            forwardedToInputMethod.insert(press)
-                        }
+                        hardwareKeyboard.pressesForwardedToInputMethod.insert(press)
+                        forwardedToInputMethod.insert(press)
                         continue
                     }
                     // Caps Lock switches the input source in the text input
@@ -140,11 +110,11 @@
                     }
                     startKeyRepeat(for: press)
                 }
-                // `super` is how UIKit feeds an unhandled press to the text
-                // input system on the iPadOS versions that do not process
-                // hardware keys before presses dispatch.
+                // `super` is how UIKit feeds a press to the text input system.
                 if !forwardedToInputMethod.isEmpty {
+                    hardwareKeyboard.textInputPressDepth += 1
                     super.pressesBegan(forwardedToInputMethod, with: event)
+                    hardwareKeyboard.textInputPressDepth -= 1
                 }
             #endif
         }
@@ -202,16 +172,26 @@
         }
 
         #if !targetEnvironment(macCatalyst)
-            /// Whether this press belongs to the input method rather than the
-            /// terminal — see `TerminalIMEComposition` for the rules.
-            private func shouldDeferKeyToInputMethod(_ key: UIKey) -> Bool {
+            /// Whether this press belongs to the text input system rather
+            /// than the terminal — see `TerminalIMEComposition` for the rules.
+            private func routesKeyToTextInput(_ key: UIKey) -> Bool {
                 let flags = filteredModifierFlags(for: key)
                 guard flags.isDisjoint(with: [.control, .command]) else { return false }
-                return TerminalIMEComposition.shouldDeferKey(
+                return TerminalIMEComposition.routesToTextInput(
                     characters: key.characters,
+                    charactersIgnoringModifiers: key.charactersIgnoringModifiers,
                     hasMarkedText: inputHandler.hasMarkedText,
                     inputModeUsesComposition: TerminalIMEComposition
                         .languageUsesComposition(textInputMode?.primaryLanguage)
+                )
+            }
+
+            /// Logs a UITextInput mutation and whether it answers a press
+            /// being handed to the text input system.
+            func noteTextInputMutation(_ name: String) {
+                TerminalDebugLog.log(
+                    .input,
+                    "text input \(name) duringPress=\(hardwareKeyboard.textInputPressDepth > 0)"
                 )
             }
         #endif
@@ -313,6 +293,17 @@
                scalar.value < 0x20
             {
                 derivedText = filteredIgnoringModifiers
+            }
+
+            // Backspace, Return, Tab and Escape report their control
+            // character. As text it marks Option consumed, so Option+Backspace
+            // would lose Option; AppKit sends these keys without text.
+            if let scalars = derivedText?.unicodeScalars,
+               scalars.count == 1,
+               let scalar = scalars.first,
+               scalar.value < 0x20 || scalar.value == 0x7F
+            {
+                derivedText = nil
             }
 
             guard let text = derivedText, !text.isEmpty else {
@@ -435,168 +426,14 @@
     }
 
     #if !targetEnvironment(macCatalyst)
-        extension UITerminalView {
-            func deferKeyToInputMethod(
-                _ key: UIKey,
-                press: UIPress?,
-                action: ghostty_input_action_e
-            ) {
-                let mods = TerminalInputModifiers(from: filteredModifierFlags(for: key))
-                var consumedFlags = key.modifierFlags
-                consumedFlags.remove(.control)
-                consumedFlags.remove(.command)
-
-                let unshifted = TerminalInputText.filteredFunctionKeyText(
-                    key.charactersIgnoringModifiers
-                )?.unicodeScalars.first?.value ?? 0
-
-                hardwareKeyboard.pendingInputMethodKeys.append(DeferredInputMethodKey(
-                    action: action,
-                    keycode: TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
-                        usage: UInt16(key.keyCode.rawValue)
-                    ),
-                    mods: mods.ghosttyMods,
-                    consumedMods: TerminalInputModifiers(from: consumedFlags).ghosttyMods,
-                    unshiftedCodepoint: unshifted,
-                    text: TerminalInputText.filteredFunctionKeyText(key.characters),
-                    press: press,
-                    // Forwarded at press time whenever calibration already
-                    // happened; only then may an unclaimed flush replay raw.
-                    forwardAttempted: HardwareKeyboardState.inputMethodNeedsPressForwarding
-                ))
-                scheduleInputMethodKeyFlush()
-            }
-
-            /// The text input system spoke — every loaned key was heard.
-            /// Called from each UITextInput mutation entry point.
-            func claimPendingInputMethodKeys() {
-                guard !hardwareKeyboard.pendingInputMethodKeys.isEmpty else { return }
-                HardwareKeyboardState.inputMethodProvenResponsive = true
-                TerminalDebugLog.log(
-                    .input,
-                    "input method claimed \(hardwareKeyboard.pendingInputMethodKeys.count) deferred key(s)"
-                )
-                hardwareKeyboard.pendingInputMethodKeys.removeAll()
-            }
-
-            private func scheduleInputMethodKeyFlush(after delay: TimeInterval = 0) {
-                guard !hardwareKeyboard.inputMethodFlushScheduled else { return }
-                hardwareKeyboard.inputMethodFlushScheduled = true
-                let flush: @MainActor @Sendable () -> Void = { [weak self] in
-                    guard let self else { return }
-                    hardwareKeyboard.inputMethodFlushScheduled = false
-                    replayUnclaimedInputMethodKeys()
-                }
-                if delay > 0 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: flush)
-                } else {
-                    DispatchQueue.main.async(execute: flush)
-                }
-            }
-
-            private func replayUnclaimedInputMethodKeys() {
-                guard !hardwareKeyboard.pendingInputMethodKeys.isEmpty else { return }
-                let keys = hardwareKeyboard.pendingInputMethodKeys
-                hardwareKeyboard.pendingInputMethodKeys.removeAll()
-
-                // The system never handed these presses to the input method
-                // on its own — calibrate to forwarding, and give these very
-                // presses to `super` right now: the input method can still
-                // compose them, so nothing leaks into the shell. Only keys
-                // whose forward has already been tried fall through to the
-                // raw replay below.
-                let retriable = keys.filter { !$0.forwardAttempted }
-                if !retriable.isEmpty {
-                    if !HardwareKeyboardState.inputMethodNeedsPressForwarding {
-                        HardwareKeyboardState.inputMethodNeedsPressForwarding = true
-                        TerminalDebugLog.log(
-                            .input,
-                            "text input system ignored the loan; forwarding deferred presses to super from now on"
-                        )
-                    }
-                    hardwareKeyboard.pendingInputMethodKeys = keys.map { key in
-                        var retried = key
-                        retried.forwardAttempted = true
-                        return retried
-                    }
-                    for key in retriable {
-                        guard let press = key.press else { continue }
-                        if hardwareKeyboard.pressesLoanedToInputMethod.contains(press) {
-                            // Still held down: its ended will complete at
-                            // `super` through the forwarded set.
-                            hardwareKeyboard.pressesForwardedToInputMethod.insert(press)
-                            super.pressesBegan([press], with: nil)
-                        } else {
-                            // Already released — hand `super` the whole
-                            // pair so the input method sees a full press.
-                            super.pressesBegan([press], with: nil)
-                            super.pressesEnded([press], with: nil)
-                        }
-                    }
-                    // The claim decides their fate — and it round-trips the
-                    // keyboard daemon, so give it real time instead of one
-                    // runloop turn. Costs a one-time delay on the process's
-                    // first key when no input method is listening at all.
-                    scheduleInputMethodKeyFlush(after: 0.25)
-                    return
-                }
-
-                // A responsive input method never gets keys replayed behind
-                // its back: its claims arrive asynchronously (a key we
-                // replay now may be mid-composition and would type twice),
-                // and a key it consumes without any mutation — candidate
-                // paging — is its to consume. The same goes for a visibly
-                // live composition even before the first claim.
-                guard !HardwareKeyboardState.inputMethodProvenResponsive,
-                      !inputHandler.hasMarkedText
-                else {
-                    TerminalDebugLog.log(
-                        .input,
-                        "dropping \(keys.count) unclaimed key(s): input method owns them (proven=\(HardwareKeyboardState.inputMethodProvenResponsive) marked=\(inputHandler.hasMarkedText))"
-                    )
-                    return
-                }
-
-                guard surface != nil else { return }
-                TerminalDebugLog.log(
-                    .input,
-                    "input method left \(keys.count) key(s) unclaimed, replaying"
-                )
-                for key in keys {
-                    var keyEvent = ghostty_input_key_s()
-                    keyEvent.action = key.action
-                    keyEvent.mods = key.mods
-                    keyEvent.keycode = key.keycode
-                    keyEvent.consumed_mods = key.consumedMods
-                    keyEvent.unshifted_codepoint = key.unshiftedCodepoint
-                    keyEvent.composing = false
-                    if let text = key.text, !text.isEmpty {
-                        text.withCString { ptr in
-                            keyEvent.text = ptr
-                            _ = sendInputKeyEvent(keyEvent)
-                        }
-                    } else {
-                        _ = sendInputKeyEvent(keyEvent)
-                    }
-                    // The matching release: pressesEnded skips loaned
-                    // presses, so the pair completes here.
-                    var release = keyEvent
-                    release.action = GHOSTTY_ACTION_RELEASE
-                    release.text = nil
-                    _ = sendInputKeyEvent(release)
-                }
-            }
-        }
-
         // MARK: - Key repeat
 
         /// UIKit sends one `pressesBegan` for a held key and nothing more
         /// until it goes up: on iOS the repeat is the text input system's,
-        /// and it only produces one for a key that reached it. The terminal
-        /// keeps every key off that path (it would echo each one back as
-        /// `insertText` / `deleteBackward`), so a held key — Delete, an
-        /// arrow, a letter — typed exactly once. The repeat is generated
-        /// here instead, as `GHOSTTY_ACTION_REPEAT` events, which both of
+        /// and it only produces one for a key that reached it. Keys the
+        /// terminal handles directly — Delete, an arrow, a Ctrl combination —
+        /// stay off that path, so a held one typed exactly once. Their
+        /// repeat is generated here instead, as `GHOSTTY_ACTION_REPEAT` events, which both of
         /// ghostty's key encoders write like a press (and the Kitty one
         /// reports as a repeat when the program asked for event types).
         ///
@@ -604,6 +441,19 @@
         /// generated on top of one the system already delivers would type
         /// every held key twice.
         extension UITerminalView {
+            /// Time a key is held before it repeats. iPadOS exposes the
+            /// user's Key Repeat setting to no app, so the host chooses.
+            public var keyRepeatDelay: TimeInterval {
+                get { hardwareKeyboard.keyRepeatDelay }
+                set { hardwareKeyboard.keyRepeatDelay = newValue }
+            }
+
+            /// Time between repeats of a held key.
+            public var keyRepeatInterval: TimeInterval {
+                get { hardwareKeyboard.keyRepeatInterval }
+                set { hardwareKeyboard.keyRepeatInterval = newValue }
+            }
+
             /// Starts repeating the key `press` just sent, when
             /// `TerminalKeyRepeat` says it repeats.
             func startKeyRepeat(for press: UIPress) {
@@ -617,8 +467,8 @@
 
                 stopKeyRepeat()
                 let timer = Timer(
-                    fire: Date(timeIntervalSinceNow: TerminalKeyRepeat.initialDelay),
-                    interval: TerminalKeyRepeat.interval,
+                    fire: Date(timeIntervalSinceNow: hardwareKeyboard.keyRepeatDelay),
+                    interval: hardwareKeyboard.keyRepeatInterval,
                     repeats: true
                 ) { [weak self] timer in
                     guard let self else { return timer.invalidate() }
@@ -630,6 +480,10 @@
                 // tracking.
                 RunLoop.main.add(timer, forMode: .common)
                 hardwareKeyboard.keyRepeat = .init(press: press, timer: timer)
+                TerminalDebugLog.log(
+                    .input,
+                    "key repeat armed code=\(key.keyCode.rawValue) delay=\(hardwareKeyboard.keyRepeatDelay) interval=\(hardwareKeyboard.keyRepeatInterval)"
+                )
             }
 
             func stopKeyRepeat() {

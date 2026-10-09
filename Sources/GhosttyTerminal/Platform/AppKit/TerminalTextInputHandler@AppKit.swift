@@ -59,7 +59,9 @@
             if accumulatedTexts != nil {
                 accumulatedTexts?.append(text)
             } else {
-                view?.surface?.paste(text: text)
+                // Dictation and other committed text is typed input, never a
+                // paste, as in Ghostty's macOS app.
+                sendTypedText(text)
             }
         }
 
@@ -99,7 +101,10 @@
             guard let text = markedTextState.text else { return }
             markedTextState.clear()
             syncPreedit()
+            sendTypedText(text)
+        }
 
+        private func sendTypedText(_ text: String) {
             var event = ghostty_input_key_s()
             event.action = GHOSTTY_ACTION_PRESS
             event.mods = ghostty_input_mods_e(rawValue: 0)
