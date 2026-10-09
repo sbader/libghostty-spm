@@ -83,8 +83,10 @@
             view.inputDelegate?.textWillChange(view)
             view.inputDelegate?.selectionWillChange(view)
 
-            markedTextState.clear()
-            view.surface?.preedit("")
+            if markedTextState.hasMarkedText {
+                markedTextState.clear()
+                view.surface?.preedit("")
+            }
             commit(text, applyingStickyModifiers: applyingStickyModifiers)
             view.refreshInputAccessoryContent()
 
@@ -98,6 +100,7 @@
         private func commit(_ text: String, applyingStickyModifiers: Bool) {
             #if !targetEnvironment(macCatalyst)
                 if applyingStickyModifiers {
+                    commitHeldDictation(reason: "sticky modifiers")
                     resetShadow()
                     _ = view?.handleStickyCommittedText(text)
                     return
@@ -139,6 +142,39 @@
                 resetShadow()
             }
             sendTypedText(edit.insertion)
+            if !hasMarkedText {
+                view.surface?.preedit(shadow.heldText ?? "")
+            }
+        }
+
+        // MARK: - Held dictation
+
+        var holdsDictation: Bool {
+            shadow.heldStart != nil
+        }
+
+        /// Sends held dictation to the terminal; it stays in the shadow as
+        /// committed text the input system can still read.
+        func commitHeldDictation(reason: String) {
+            guard holdsDictation else { return }
+            TerminalDebugLog.log(
+                .ime,
+                "dictation commit reason=\(reason) held=\(TerminalDebugLog.describe(shadow.heldText))"
+            ) // Debug: dictation
+            apply(shadow.commitHeld(), reason: "commit held")
+        }
+
+        /// UIKit's final dictation result. The hypothesis it replaces has
+        /// already been deleted through the document.
+        func insertDictationResult(_ text: String) {
+            TerminalDebugLog.log(
+                .ime,
+                "dictation result text=\(TerminalDebugLog.describe(text)) held=\(TerminalDebugLog.describe(shadow.heldText))"
+            ) // Debug: dictation
+            if !text.isEmpty {
+                insertText(text)
+            }
+            commitHeldDictation(reason: "result")
         }
 
         /// Deliver keyboard text the way a hardware keystroke does: on a key
@@ -194,6 +230,7 @@
 
         func setMarkedText(_ text: String?, selectedRange: NSRange) {
             guard let view else { return }
+            commitHeldDictation(reason: "marked text")
             let shouldNotifySelectionChange = shouldNotifySelectionChange
 
             TerminalDebugLog.log(
@@ -374,6 +411,7 @@
         /// moving — so the shadow no longer describes it.
         func resetCommittedText(reason: String) {
             guard let view else { return }
+            commitHeldDictation(reason: reason)
             // An emptied shadow still holds its anchor.
             guard shadow.length > 0 else {
                 shadowAnchorText = nil

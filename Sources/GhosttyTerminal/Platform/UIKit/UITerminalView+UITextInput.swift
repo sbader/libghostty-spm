@@ -342,8 +342,21 @@
             return ""
         }
 
+        /// The end of a dictation session; held dictation is sent.
         open func removeDictationResultPlaceholder(_: Any, willInsertResult: Bool) {
             TerminalDebugLog.log(.ime, "dictation placeholder remove willInsertResult=\(willInsertResult)") // Debug: dictation
+            inputHandler.commitHeldDictation(reason: "placeholder removed")
+        }
+
+        /// The final result of an utterance. Without this UIKit sends it
+        /// through `insertText(_:)`, indistinguishable from a new hypothesis.
+        open func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
+            inputHandler.insertDictationResult(dictationResult.map(\.text).joined())
+        }
+
+        open func dictationRecognitionFailed() {
+            TerminalDebugLog.log(.ime, "dictation recognition failed") // Debug: dictation
+            inputHandler.commitHeldDictation(reason: "recognition failed")
         }
 
         // MARK: - UITextInput Delegate
