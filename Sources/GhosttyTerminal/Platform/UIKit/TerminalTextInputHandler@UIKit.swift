@@ -100,14 +100,14 @@
         private func commit(_ text: String, applyingStickyModifiers: Bool) {
             #if !targetEnvironment(macCatalyst)
                 if applyingStickyModifiers {
-                    commitHeldDictation(reason: "sticky modifiers")
+                    commitHeldDictation()
                     resetShadow()
                     _ = view?.handleStickyCommittedText(text)
                     return
                 }
             #endif
             freezeAnchorText()
-            apply(shadow.insert(text), reason: "commit")
+            apply(shadow.insert(text))
         }
 
         /// The cursor moves past the shadow's own text, so the anchor is
@@ -115,10 +115,6 @@
         private func freezeAnchorText() {
             guard shadowAnchorText == nil, Self.documentAnchorLength > 0 else { return }
             shadowAnchorText = anchorText
-            TerminalDebugLog.log(
-                .ime,
-                "shadow anchor=\(TerminalDebugLog.describe(shadowAnchorText))"
-            ) // Debug: dictation
         }
 
         private func resetShadow() {
@@ -128,11 +124,7 @@
 
         /// Sends a shadow edit: one Delete per character removed, then the
         /// new text.
-        private func apply(_ edit: TerminalInputShadow.Edit, reason: String) {
-            TerminalDebugLog.log(
-                .ime,
-                "shadow \(reason) deletions=\(edit.deletions) insertion=\(TerminalDebugLog.describe(edit.insertion)) shadow=\(TerminalDebugLog.describe(shadow.text)) selected=\(TerminalDebugLog.describe(shadow.selectedRange))"
-            ) // Debug: dictation
+        private func apply(_ edit: TerminalInputShadow.Edit) {
             guard let view else { return }
             for _ in 0 ..< edit.deletions {
                 view.sendBackspaceKey()
@@ -155,26 +147,18 @@
 
         /// Sends held dictation to the terminal; it stays in the shadow as
         /// committed text the input system can still read.
-        func commitHeldDictation(reason: String) {
+        func commitHeldDictation() {
             guard holdsDictation else { return }
-            TerminalDebugLog.log(
-                .ime,
-                "dictation commit reason=\(reason) held=\(TerminalDebugLog.describe(shadow.heldText))"
-            ) // Debug: dictation
-            apply(shadow.commitHeld(), reason: "commit held")
+            apply(shadow.commitHeld())
         }
 
         /// UIKit's final dictation result. The hypothesis it replaces has
         /// already been deleted through the document.
         func insertDictationResult(_ text: String) {
-            TerminalDebugLog.log(
-                .ime,
-                "dictation result text=\(TerminalDebugLog.describe(text)) held=\(TerminalDebugLog.describe(shadow.heldText))"
-            ) // Debug: dictation
             if !text.isEmpty {
                 insertText(text)
             }
-            commitHeldDictation(reason: "result")
+            commitHeldDictation()
         }
 
         /// Deliver keyboard text the way a hardware keystroke does: on a key
@@ -230,7 +214,7 @@
 
         func setMarkedText(_ text: String?, selectedRange: NSRange) {
             guard let view else { return }
-            commitHeldDictation(reason: "marked text")
+            commitHeldDictation()
             let shouldNotifySelectionChange = shouldNotifySelectionChange
 
             TerminalDebugLog.log(
@@ -339,10 +323,6 @@
                     NSRange(location: shadow.length, length: 0)
                 }
                 guard shadow.selectedRange != committedRange else { return }
-                TerminalDebugLog.log(
-                    .ime,
-                    "shadow select range=\(TerminalDebugLog.describe(committedRange)) length=\(shadow.length)"
-                ) // Debug: dictation
                 notifySelectionWillChange()
                 shadow.select(committedRange)
                 notifySelectionDidChange()
@@ -383,7 +363,7 @@
             view.inputDelegate?.textWillChange(view)
             view.inputDelegate?.selectionWillChange(view)
             freezeAnchorText()
-            apply(shadow.replace(committedRange, with: text), reason: "replace")
+            apply(shadow.replace(committedRange, with: text))
             view.inputDelegate?.selectionDidChange(view)
             view.inputDelegate?.textDidChange(view)
             return true
@@ -401,7 +381,7 @@
             view.inputDelegate?.textWillChange(view)
             view.inputDelegate?.selectionWillChange(view)
             shadow = updated
-            apply(edit, reason: "deleteBackward")
+            apply(edit)
             view.inputDelegate?.selectionDidChange(view)
             view.inputDelegate?.textDidChange(view)
             return true
@@ -409,18 +389,14 @@
 
         /// The terminal line changed by other means — a key, a paste, focus
         /// moving — so the shadow no longer describes it.
-        func resetCommittedText(reason: String) {
+        func resetCommittedText() {
             guard let view else { return }
-            commitHeldDictation(reason: reason)
+            commitHeldDictation()
             // An emptied shadow still holds its anchor.
             guard shadow.length > 0 else {
                 shadowAnchorText = nil
                 return
             }
-            TerminalDebugLog.log(
-                .ime,
-                "shadow reset reason=\(reason) shadow=\(TerminalDebugLog.describe(shadow.text))"
-            ) // Debug: dictation
             view.inputDelegate?.textWillChange(view)
             view.inputDelegate?.selectionWillChange(view)
             resetShadow()

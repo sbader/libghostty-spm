@@ -81,7 +81,7 @@
                 if inputHandler.hasMarkedText {
                     inputHandler.unmarkText()
                 }
-                inputHandler.resetCommittedText(reason: "key")
+                inputHandler.resetCommittedText()
             }
             return surface.sendKeyEvent(event)
         }
