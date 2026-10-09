@@ -8,8 +8,8 @@ import Foundation
 /// UITextInput document, which holds no text, so they never reach the
 /// terminal.
 enum TerminalKeyRepeat {
-    /// iPadOS exposes the user's Key Repeat setting to no app, so these
-    /// follow AppKit's defaults.
+    /// Defaults for the view's `keyRepeatDelay` and `keyRepeatInterval`,
+    /// following AppKit's defaults.
     static let initialDelay: TimeInterval = 0.4
     static let interval: TimeInterval = 0.05
 

@@ -71,7 +71,7 @@
                 // the repeat of one still held, as a press would.
                 stopKeyRepeat()
             #else
-                claimPendingInputMethodKeys()
+                noteTextInputMutation("insertText")
             #endif
             // A lone, unmarked "\n"/"\r" is the software keyboard's Return —
             // it must travel the key path (bracketed paste turns a text-path
@@ -158,7 +158,7 @@
                 // A key went down, pressed or not; see `insertText`.
                 stopKeyRepeat()
             #else
-                claimPendingInputMethodKeys()
+                noteTextInputMutation("deleteBackward")
             #endif
             if inputHandler.deleteBackwardInMarkedText() {
                 TerminalDebugLog.log(.input, "deleteBackward handled by marked text")
@@ -207,14 +207,14 @@
             selectedRange: NSRange,
         ) {
             #if !targetEnvironment(macCatalyst)
-                claimPendingInputMethodKeys()
+                noteTextInputMutation("setMarkedText")
             #endif
             inputHandler.setMarkedText(markedText, selectedRange: selectedRange)
         }
 
         open func unmarkText() {
             #if !targetEnvironment(macCatalyst)
-                claimPendingInputMethodKeys()
+                noteTextInputMutation("unmarkText")
             #endif
             inputHandler.unmarkText(applyingStickyModifiers: false)
         }
@@ -312,7 +312,7 @@
 
         open func replace(_: UITextRange, withText text: String) {
             #if !targetEnvironment(macCatalyst)
-                claimPendingInputMethodKeys()
+                noteTextInputMutation("replace")
             #endif
             #if !targetEnvironment(macCatalyst)
                 if inputHandler.hasMarkedText {
