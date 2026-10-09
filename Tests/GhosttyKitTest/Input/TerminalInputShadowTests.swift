@@ -113,4 +113,90 @@ struct TerminalInputShadowTests {
         #expect(TerminalInputShadow.anchorText(forTextBeforeCursor: "中") == "中")
         #expect(TerminalInputShadow.anchorText(forTextBeforeCursor: "😀") == "x")
     }
+
+    /// The calls from a device log of "this is dictation", in shadow offsets.
+    @Test
+    func `streaming dictation is held from its first revision until committed`() {
+        var shadow = TerminalInputShadow()
+
+        #expect(shadow.insert("Th") == .init(deletions: 0, insertion: "Th"))
+        #expect(shadow.heldText == nil)
+
+        #expect(shadow.replace(NSRange(location: 0, length: 2), with: "This") == .init(deletions: 2, insertion: ""))
+        #expect(shadow.heldText == "This")
+        #expect(shadow.replace(NSRange(location: 0, length: 4), with: "This is").isEmpty)
+        #expect(shadow.replace(NSRange(location: 0, length: 7), with: "this is dictation").isEmpty)
+        #expect(shadow.replace(NSRange(location: 0, length: 17), with: "").isEmpty)
+        #expect(shadow.insert("this is dictation").isEmpty)
+        #expect(shadow.text == "this is dictation")
+        #expect(shadow.heldText == "this is dictation")
+
+        #expect(shadow.commitHeld() == .init(deletions: 0, insertion: "this is dictation"))
+        #expect(shadow.heldText == nil)
+        #expect(shadow.text == "this is dictation")
+    }
+
+    @Test
+    func `held dictation after typed text keeps the typed text`() {
+        var shadow = TerminalInputShadow()
+        _ = shadow.insert("git commit -m ")
+        _ = shadow.insert("fi")
+
+        #expect(shadow.replace(NSRange(location: 14, length: 2), with: "fix") == .init(deletions: 2, insertion: ""))
+        #expect(shadow.heldText == "fix")
+        #expect(shadow.commitHeld() == .init(deletions: 0, insertion: "fix"))
+        #expect(shadow.text == "git commit -m fix")
+    }
+
+    @Test
+    func `an edit before held text takes that text back too`() {
+        var shadow = TerminalInputShadow()
+        _ = shadow.insert("ab")
+        _ = shadow.insert("Th")
+        _ = shadow.replace(NSRange(location: 2, length: 2), with: "This")
+
+        #expect(shadow.replace(NSRange(location: 1, length: 5), with: "X") == .init(deletions: 1, insertion: ""))
+        #expect(shadow.heldText == "X")
+        #expect(shadow.commitHeld() == .init(deletions: 0, insertion: "X"))
+    }
+
+    @Test
+    func `typing, deleting and keyboard shortcuts are never held`() {
+        var typed = TerminalInputShadow()
+        for character in ["l", "s", " ", "-", "l"] {
+            _ = typed.insert(character)
+        }
+        _ = typed.deleteBackward()
+        #expect(typed.heldText == nil)
+
+        var replacement = TerminalInputShadow()
+        for character in ["o", "m", "w", " "] {
+            _ = replacement.insert(character)
+        }
+        #expect(replacement.replace(NSRange(location: 0, length: 3), with: "On my way!") == .init(deletions: 4, insertion: "On my way! "))
+        #expect(replacement.heldText == nil)
+
+        var period = TerminalInputShadow()
+        _ = period.insert("word")
+        _ = period.insert(" ")
+        _ = period.replace(NSRange(location: 4, length: 1), with: ". ")
+        #expect(period.heldText == nil)
+
+        var selected = TerminalInputShadow()
+        _ = selected.insert("abc")
+        selected.select(NSRange(location: 0, length: 3))
+        _ = selected.deleteBackward()
+        #expect(selected.heldText == nil)
+    }
+
+    @Test
+    func `reset drops held text`() {
+        var shadow = TerminalInputShadow()
+        _ = shadow.insert("Th")
+        _ = shadow.replace(NSRange(location: 0, length: 2), with: "This")
+        shadow.reset()
+
+        #expect(shadow.heldText == nil)
+        #expect(shadow.text.isEmpty)
+    }
 }

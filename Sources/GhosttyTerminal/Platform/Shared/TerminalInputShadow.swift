@@ -9,6 +9,14 @@ import Foundation
 /// text, so a revision becomes edits a line editor understands: one Delete
 /// per character after the unchanged prefix, then the new remainder.
 /// SwiftTerm handles dictation the same way.
+///
+/// Dictation is held back from the terminal, as macOS keeps it marked: once
+/// the input system revises the text it inserted last — what streaming
+/// dictation does with each better hypothesis — that text is taken back and
+/// held from then on. Typing never revises its own insertion, and a text
+/// replacement shortcut replaces the typed word, not the space inserted
+/// last. Held text stays in the shadow for the input system to revise and
+/// is shown as preedit until committed.
 struct TerminalInputShadow {
     struct Edit: Equatable {
         var deletions: Int
@@ -24,9 +32,22 @@ struct TerminalInputShadow {
     /// The last edit deleted a trailing space, the first half of the
     /// keyboard's split period shortcut.
     private var deletedTrailingSpace = false
+    /// Where the input system's last insertion or replacement landed.
+    private var lastInsertion: NSRange?
+    /// Where held text starts; the text from here is not in the terminal.
+    private(set) var heldStart: Int?
 
     var length: Int {
         (text as NSString).length
+    }
+
+    var heldText: String? {
+        heldStart.map { (text as NSString).substring(from: $0) }
+    }
+
+    /// The part of the shadow the terminal has.
+    private var sentText: String {
+        heldStart.map { (text as NSString).substring(to: $0) } ?? text
     }
 
     mutating func reset() {
@@ -46,21 +67,42 @@ struct TerminalInputShadow {
         replace(selectedRange, with: replacement)
     }
 
-    /// Replaces `range` and leaves the caret after the replacement.
+    /// Replaces `range` and leaves the caret after the replacement. The edit
+    /// covers only what the terminal has; held text changes in place.
     mutating func replace(_ range: NSRange, with replacement: String) -> Edit {
+        replace(range, with: replacement, revisable: true)
+    }
+
+    /// Sends the held text: the edit inserts it.
+    mutating func commitHeld() -> Edit {
+        let old = sentText
+        heldStart = nil
+        return Self.edit(from: old, to: sentText)
+    }
+
+    private mutating func replace(_ range: NSRange, with replacement: String, revisable: Bool) -> Edit {
         let range = clamped(range)
-        let replacement = periodShortcutReplacement(range, with: replacement) ?? replacement
+        let shortcut = periodShortcutReplacement(range, with: replacement)
+        let replacement = shortcut ?? replacement
+        let revision = revisable && shortcut == nil && !replacement.isEmpty
+            && range.length > 0 && range == lastInsertion && NSMaxRange(range) == length
         deletedTrailingSpace = false
-        let old = text
-        text = (old as NSString).replacingCharacters(in: range, with: replacement)
+        let old = sentText
+        text = (text as NSString).replacingCharacters(in: range, with: replacement)
         selectedRange = NSRange(location: range.location + (replacement as NSString).length, length: 0)
-        return Self.edit(from: old, to: text)
+        lastInsertion = NSRange(location: range.location, length: (replacement as NSString).length)
+        if let heldStart {
+            self.heldStart = min(heldStart, range.location)
+        } else if revision {
+            heldStart = range.location
+        }
+        return Self.edit(from: old, to: sentText)
     }
 
     /// Nil with nothing before the caret: the Delete is the terminal's.
     mutating func deleteBackward() -> Edit? {
         guard selectedRange.length == 0 else {
-            return replace(selectedRange, with: "")
+            return replace(selectedRange, with: "", revisable: false)
         }
         guard selectedRange.location > 0 else {
             deletedTrailingSpace = false
@@ -68,7 +110,7 @@ struct TerminalInputShadow {
         }
         let characterRange = (text as NSString).rangeOfComposedCharacterSequence(at: selectedRange.location - 1)
         let trailingSpace = NSMaxRange(characterRange) == length && text(in: characterRange) == " "
-        let edit = replace(characterRange, with: "")
+        let edit = replace(characterRange, with: "", revisable: false)
         deletedTrailingSpace = trailingSpace
         return edit
     }
