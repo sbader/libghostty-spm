@@ -58,7 +58,7 @@
             if inputHandler.hasMarkedText {
                 inputHandler.unmarkText()
             }
-            inputHandler.resetCommittedText(reason: "paste")
+            inputHandler.resetCommittedText()
             if TerminalPasteboardContent.text() != nil {
                 _ = surface?.performBindingAction("paste_from_clipboard")
                 return

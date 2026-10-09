@@ -72,7 +72,7 @@
             if inputHandler.hasMarkedText {
                 inputHandler.unmarkText()
             }
-            inputHandler.resetCommittedText(reason: "key")
+            inputHandler.resetCommittedText()
 
             var event = ghostty_input_key_s()
             event.action = GHOSTTY_ACTION_PRESS
@@ -155,7 +155,7 @@
             if inputHandler.hasMarkedText {
                 inputHandler.unmarkText()
             }
-            inputHandler.resetCommittedText(reason: "key")
+            inputHandler.resetCommittedText()
 
             guard surface != nil else { return }
             var event = ghostty_input_key_s()
@@ -192,7 +192,7 @@
             if inputHandler.hasMarkedText {
                 inputHandler.unmarkText()
             }
-            inputHandler.resetCommittedText(reason: "key")
+            inputHandler.resetCommittedText()
 
             guard let mapping = keyMapping(for: text) else { return false }
 

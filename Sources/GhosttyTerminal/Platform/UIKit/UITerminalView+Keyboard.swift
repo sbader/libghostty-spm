@@ -209,7 +209,7 @@
             if action == GHOSTTY_ACTION_PRESS,
                !TerminalKeyRepeat.isModifier(usage: UInt16(key.keyCode.rawValue))
             {
-                inputHandler.resetCommittedText(reason: "hardware key")
+                inputHandler.resetCommittedText()
             }
 
             let filteredModifierFlags = filteredModifierFlags(for: key)
