@@ -30,6 +30,7 @@
         @discardableResult
         func paste(text: String) -> Bool {
             dismissTouchSelection()
+            inputHandler.resetCommittedText(reason: "paste")
             return surface?.paste(text: text) ?? false
         }
 

@@ -95,6 +95,7 @@
             }
 
             if route == .semanticEnter {
+                inputHandler.resetCommittedText(reason: "return")
                 #if !targetEnvironment(macCatalyst)
                     let mods = stickyModifiers.consumeForNextKey()
                     TerminalDebugLog.log(
@@ -115,6 +116,7 @@
                 }
 
                 if stickyModifiers.hasActiveModifiers {
+                    inputHandler.resetCommittedText(reason: "sticky modifiers")
                     _ = handleStickyTextInput(text)
                     return
                 }
@@ -172,16 +174,24 @@
                 return
             }
 
-            let usage = UInt16(UIKeyboardHIDUsage.keyboardDeleteOrBackspace.rawValue)
-
             #if !targetEnvironment(macCatalyst)
                 if stickyModifiers.hasActiveModifiers {
+                    let usage = UInt16(UIKeyboardHIDUsage.keyboardDeleteOrBackspace.rawValue)
                     let mods = stickyModifiers.consumeForNextKey()
                     sendSyntheticKey(usage: usage, additionalMods: mods)
                     return
                 }
             #endif
 
+            if inputHandler.deleteBackwardInCommittedText() {
+                return
+            }
+            sendBackspaceKey()
+        }
+
+        /// One Delete key press and release, as the hardware key sends.
+        func sendBackspaceKey() {
+            let usage = UInt16(UIKeyboardHIDUsage.keyboardDeleteOrBackspace.rawValue)
             var keyEvent = ghostty_input_key_s()
             keyEvent.action = GHOSTTY_ACTION_PRESS
             keyEvent.mods = ghostty_input_mods_e(rawValue: 0)
@@ -310,7 +320,7 @@
             return inputHandler.text(in: range)
         }
 
-        open func replace(_: UITextRange, withText text: String) {
+        open func replace(_ range: UITextRange, withText text: String) {
             #if !targetEnvironment(macCatalyst)
                 noteTextInputMutation("replace")
             #endif
@@ -321,12 +331,33 @@
                 }
 
                 if stickyModifiers.hasActiveModifiers {
+                    inputHandler.resetCommittedText(reason: "sticky modifiers")
                     _ = handleStickyTextInput(text)
                     return
                 }
             #endif
 
+            if let range = range as? TerminalTextRange,
+               inputHandler.replaceCommittedText(range, with: text)
+            {
+                return
+            }
             inputHandler.insertText(text)
+        }
+
+        // MARK: - UITextInput Dictation
+
+        /// Without a placeholder of its own, UIKit inserts ten spaces while
+        /// dictation's final result is pending and deletes them after; here
+        /// both would reach the terminal. Flutter's engine does the same
+        /// (flutter/engine#6607).
+        open var insertDictationResultPlaceholder: Any {
+            TerminalDebugLog.log(.ime, "dictation placeholder insert") // Debug: dictation
+            return ""
+        }
+
+        open func removeDictationResultPlaceholder(_: Any, willInsertResult: Bool) {
+            TerminalDebugLog.log(.ime, "dictation placeholder remove willInsertResult=\(willInsertResult)") // Debug: dictation
         }
 
         // MARK: - UITextInput Delegate
