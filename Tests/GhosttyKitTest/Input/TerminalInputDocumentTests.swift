@@ -59,4 +59,18 @@ struct TerminalInputDocumentTests {
         #expect(document.position(ofMarkedOffset: 2) == 2)
         #expect(document.markedRange(of: NSRange(location: 1, length: 2)) == NSRange(location: 1, length: 2))
     }
+
+    @Test
+    func `committed text sits between the anchor and the marked text`() {
+        let document = TerminalInputDocument(anchorLength: 1, committedLength: 3, markedLength: 2)
+
+        #expect(document.length == 6)
+        #expect(document.position(ofCommittedOffset: 0) == 1)
+        #expect(document.position(ofCommittedOffset: 99) == 4)
+        #expect(document.position(ofMarkedOffset: 0) == 4)
+        #expect(document.committedRange(of: NSRange(location: 0, length: 6)) == NSRange(location: 0, length: 3))
+        #expect(document.committedRange(of: NSRange(location: 2, length: 1)) == NSRange(location: 1, length: 1))
+        #expect(document.markedRange(of: NSRange(location: 0, length: 6)) == NSRange(location: 0, length: 2))
+        #expect(document.markedRange(of: NSRange(location: 1, length: 3)) == NSRange(location: 0, length: 0))
+    }
 }

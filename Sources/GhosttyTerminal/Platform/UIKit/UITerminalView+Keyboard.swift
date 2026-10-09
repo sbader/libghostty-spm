@@ -206,6 +206,11 @@
                 TerminalDebugLog.log(.input, "uikit key ignored: missing surface")
                 return false
             }
+            if action == GHOSTTY_ACTION_PRESS,
+               !TerminalKeyRepeat.isModifier(usage: UInt16(key.keyCode.rawValue))
+            {
+                inputHandler.resetCommittedText(reason: "hardware key")
+            }
 
             let filteredModifierFlags = filteredModifierFlags(for: key)
             let isCommandModified = filteredModifierFlags.contains(.command)

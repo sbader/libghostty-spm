@@ -65,8 +65,11 @@
                     dismissTouchSelection()
                 }
             }
-            if committingMarkedText, inputHandler.hasMarkedText {
-                inputHandler.unmarkText()
+            if committingMarkedText {
+                if inputHandler.hasMarkedText {
+                    inputHandler.unmarkText()
+                }
+                inputHandler.resetCommittedText(reason: "key")
             }
             return surface.sendKeyEvent(event)
         }

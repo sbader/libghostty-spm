@@ -49,7 +49,7 @@ struct TerminalInputLogicFuzzTests {
             #expect(markedRange.location >= 0 && markedRange.length >= 0, "seed \(seed) range \(range)")
             #expect(NSMaxRange(markedRange) <= document.markedLength, "seed \(seed) range \(range)")
             if NSMaxRange(range) <= document.anchorLength {
-                #expect(markedRange.length == 0, "seed \(seed): the anchor holds no text")
+                #expect(markedRange.length == 0, "seed \(seed): the anchor is outside the marked text")
             }
         }
     }

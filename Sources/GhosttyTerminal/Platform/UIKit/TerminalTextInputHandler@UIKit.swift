@@ -11,6 +11,10 @@
     final class TerminalTextInputHandler {
         private weak var view: UITerminalView?
         private var markedTextState = TerminalMarkedTextState()
+        private var shadow = TerminalInputShadow()
+        /// The anchor's text from the shadow's first edit until it resets;
+        /// see `anchorText`.
+        private var shadowAnchorText: String?
 
         var hasMarkedText: Bool {
             markedTextState.hasMarkedText
@@ -27,9 +31,9 @@
         /// document is only ever the composition, empty at a prompt, so the
         /// caret was always at its start and a held Delete sent exactly one
         /// backspace. One position of anchor ahead of the composition keeps
-        /// the caret off the start; it carries no text, so what the keyboard
-        /// reads as context is unchanged. Catalyst has no software keyboard
-        /// and keeps the plain document.
+        /// the caret off the start; it reads as the character before the
+        /// terminal's cursor (`anchorText`). Catalyst has no software
+        /// keyboard and keeps the plain document.
         #if targetEnvironment(macCatalyst)
             private static let documentAnchorLength = 0
         #else
@@ -41,8 +45,22 @@
         var document: TerminalInputDocument {
             TerminalInputDocument(
                 anchorLength: Self.documentAnchorLength,
+                committedLength: shadow.length,
                 markedLength: markedTextState.documentLength
             )
+        }
+
+        /// What the anchor reads as: the character before the terminal's
+        /// cursor where the shadow starts. Dictation reads it to decide
+        /// whether to put a space before its first word, as iTerm2 serves
+        /// the screen for dictation spacing on macOS. Kept while the shadow
+        /// empties: dictation's final result deletes its hypothesis and
+        /// inserts again before the terminal has echoed the deletes.
+        private var anchorText: String {
+            if let shadowAnchorText {
+                return shadowAnchorText
+            }
+            return TerminalInputShadow.anchorText(forTextBeforeCursor: view?.surface?.textBeforeCursor())
         }
 
         init(view: UITerminalView) {
@@ -56,7 +74,6 @@
             applyingStickyModifiers: Bool = false
         ) {
             guard let view else { return }
-            let shouldNotifySelectionChange = shouldNotifySelectionChange
 
             TerminalDebugLog.log(
                 .input,
@@ -64,27 +81,64 @@
             )
 
             view.inputDelegate?.textWillChange(view)
-            if shouldNotifySelectionChange {
-                view.inputDelegate?.selectionWillChange(view)
-            }
+            view.inputDelegate?.selectionWillChange(view)
 
             markedTextState.clear()
             view.surface?.preedit("")
-            #if !targetEnvironment(macCatalyst)
-                if applyingStickyModifiers {
-                    _ = view.handleStickyCommittedText(text)
-                } else {
-                    sendTypedText(text)
-                }
-            #else
-                sendTypedText(text)
-            #endif
+            commit(text, applyingStickyModifiers: applyingStickyModifiers)
             view.refreshInputAccessoryContent()
 
-            if shouldNotifySelectionChange {
-                view.inputDelegate?.selectionDidChange(view)
-            }
+            view.inputDelegate?.selectionDidChange(view)
             view.inputDelegate?.textDidChange(view)
+        }
+
+        /// Committed text joins the shadow and reaches the terminal as the
+        /// shadow's edit. Text the shadow cannot revise later — sticky
+        /// modified keys, lines — ends it.
+        private func commit(_ text: String, applyingStickyModifiers: Bool) {
+            #if !targetEnvironment(macCatalyst)
+                if applyingStickyModifiers {
+                    resetShadow()
+                    _ = view?.handleStickyCommittedText(text)
+                    return
+                }
+            #endif
+            freezeAnchorText()
+            apply(shadow.insert(text), reason: "commit")
+        }
+
+        /// The cursor moves past the shadow's own text, so the anchor is
+        /// read once, before the shadow's first edit.
+        private func freezeAnchorText() {
+            guard shadowAnchorText == nil, Self.documentAnchorLength > 0 else { return }
+            shadowAnchorText = anchorText
+            TerminalDebugLog.log(
+                .ime,
+                "shadow anchor=\(TerminalDebugLog.describe(shadowAnchorText))"
+            ) // Debug: dictation
+        }
+
+        private func resetShadow() {
+            shadow.reset()
+            shadowAnchorText = nil
+        }
+
+        /// Sends a shadow edit: one Delete per character removed, then the
+        /// new text.
+        private func apply(_ edit: TerminalInputShadow.Edit, reason: String) {
+            TerminalDebugLog.log(
+                .ime,
+                "shadow \(reason) deletions=\(edit.deletions) insertion=\(TerminalDebugLog.describe(edit.insertion)) shadow=\(TerminalDebugLog.describe(shadow.text)) selected=\(TerminalDebugLog.describe(shadow.selectedRange))"
+            ) // Debug: dictation
+            guard let view else { return }
+            for _ in 0 ..< edit.deletions {
+                view.sendBackspaceKey()
+            }
+            // Text with a line break goes as a paste and cannot be revised.
+            if edit.insertion.contains(where: \.isNewline) {
+                resetShadow()
+            }
+            sendTypedText(edit.insertion)
         }
 
         /// Deliver keyboard text the way a hardware keystroke does: on a key
@@ -156,6 +210,7 @@
                         }
 
                         markedTextState.clear()
+                        resetShadow()
                         view.surface?.preedit("")
                         _ = view.handleStickyMarkedText(text)
                         view.refreshInputAccessoryContent()
@@ -173,6 +228,8 @@
             view.inputDelegate?.textWillChange(view)
             view.inputDelegate?.selectionWillChange(view)
 
+            // The composition sits at the terminal's cursor, after the shadow.
+            shadow.select(NSRange(location: shadow.length, length: 0))
             markedTextState.setMarkedText(text, selectedRange: selectedRange)
 
             if let text = markedTextState.text, !text.isEmpty {
@@ -206,15 +263,7 @@
             markedTextState.clear()
             view.surface?.preedit("")
             if let committedText, !committedText.isEmpty {
-                #if !targetEnvironment(macCatalyst)
-                    if applyingStickyModifiers {
-                        _ = view.handleStickyCommittedText(committedText)
-                    } else {
-                        sendTypedText(committedText)
-                    }
-                #else
-                    sendTypedText(committedText)
-                #endif
+                commit(committedText, applyingStickyModifiers: applyingStickyModifiers)
             }
             view.refreshInputAccessoryContent()
 
@@ -233,13 +282,35 @@
         }
 
         func selectedTextRange() -> TerminalTextRange {
-            TerminalTextRange(
+            guard hasMarkedText else {
+                return TerminalTextRange(
+                    location: document.position(ofCommittedOffset: shadow.selectedRange.location),
+                    length: shadow.selectedRange.length
+                )
+            }
+            return TerminalTextRange(
                 location: document.position(ofMarkedOffset: markedTextState.selectedRange.location),
                 length: markedTextState.selectedRange.length
             )
         }
 
         func setSelectedTextRange(_ range: UITextRange?) {
+            guard hasMarkedText else {
+                let committedRange = if let range = range as? TerminalTextRange {
+                    document.committedRange(of: NSRange(location: range.location, length: range.length))
+                } else {
+                    NSRange(location: shadow.length, length: 0)
+                }
+                guard shadow.selectedRange != committedRange else { return }
+                TerminalDebugLog.log(
+                    .ime,
+                    "shadow select range=\(TerminalDebugLog.describe(committedRange)) length=\(shadow.length)"
+                ) // Debug: dictation
+                notifySelectionWillChange()
+                shadow.select(committedRange)
+                notifySelectionDidChange()
+                return
+            }
             let clampedRange = if let range = range as? TerminalTextRange {
                 document.markedRange(of: NSRange(location: range.location, length: range.length))
             } else {
@@ -258,8 +329,65 @@
         func text(in range: TerminalTextRange) -> String? {
             let document = document
             guard range.location >= 0, range.length >= 0, range.location + range.length <= document.length else { return nil }
-            let markedRange = document.markedRange(of: NSRange(location: range.location, length: range.length))
-            return markedTextState.text(in: markedRange)
+            let documentRange = NSRange(location: range.location, length: range.length)
+            let anchor = documentRange.location < document.anchorLength && documentRange.length > 0 ? anchorText : ""
+            let committed = shadow.text(in: document.committedRange(of: documentRange)) ?? ""
+            let marked = markedTextState.text(in: document.markedRange(of: documentRange)) ?? ""
+            return anchor + committed + marked
+        }
+
+        // MARK: - Shadow
+
+        /// Applies the input system's replacement of committed text. False
+        /// when marked text is open: the replacement is the composition's.
+        func replaceCommittedText(_ range: TerminalTextRange, with text: String) -> Bool {
+            guard let view, !hasMarkedText else { return false }
+            let committedRange = document.committedRange(of: NSRange(location: range.location, length: range.length))
+            view.inputDelegate?.textWillChange(view)
+            view.inputDelegate?.selectionWillChange(view)
+            freezeAnchorText()
+            apply(shadow.replace(committedRange, with: text), reason: "replace")
+            view.inputDelegate?.selectionDidChange(view)
+            view.inputDelegate?.textDidChange(view)
+            return true
+        }
+
+        /// Deletes before the caret in the shadow. False with nothing there:
+        /// the Delete goes to the terminal as a plain key.
+        func deleteBackwardInCommittedText() -> Bool {
+            guard let view, !hasMarkedText else { return false }
+            var updated = shadow
+            guard let edit = updated.deleteBackward() else {
+                shadow = updated
+                return false
+            }
+            view.inputDelegate?.textWillChange(view)
+            view.inputDelegate?.selectionWillChange(view)
+            shadow = updated
+            apply(edit, reason: "deleteBackward")
+            view.inputDelegate?.selectionDidChange(view)
+            view.inputDelegate?.textDidChange(view)
+            return true
+        }
+
+        /// The terminal line changed by other means — a key, a paste, focus
+        /// moving — so the shadow no longer describes it.
+        func resetCommittedText(reason: String) {
+            guard let view else { return }
+            // An emptied shadow still holds its anchor.
+            guard shadow.length > 0 else {
+                shadowAnchorText = nil
+                return
+            }
+            TerminalDebugLog.log(
+                .ime,
+                "shadow reset reason=\(reason) shadow=\(TerminalDebugLog.describe(shadow.text))"
+            ) // Debug: dictation
+            view.inputDelegate?.textWillChange(view)
+            view.inputDelegate?.selectionWillChange(view)
+            resetShadow()
+            view.inputDelegate?.selectionDidChange(view)
+            view.inputDelegate?.textDidChange(view)
         }
 
         func deleteBackwardInMarkedText() -> Bool {
@@ -301,6 +429,7 @@
 
         private var shouldNotifySelectionChange: Bool {
             hasMarkedText
+                || shadow.length > 0
                 || markedTextState.selectedRange.location != 0
                 || markedTextState.selectedRange.length != 0
         }
