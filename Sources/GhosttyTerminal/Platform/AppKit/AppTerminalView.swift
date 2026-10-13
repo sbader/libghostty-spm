@@ -83,6 +83,10 @@
             setupTrackingArea()
 
             core.isAttached = { [weak self] in self?.window != nil }
+            core.isFocused = { [weak self] in
+                guard let self, let window else { return false }
+                return window.isKeyWindow && window.firstResponder === self
+            }
             core.displayLinkContext = .view(self)
             core.scaleFactor = { [weak self] in
                 self?.currentScaleFactor() ?? 2.0

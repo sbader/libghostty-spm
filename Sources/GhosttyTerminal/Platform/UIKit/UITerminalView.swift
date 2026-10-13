@@ -178,6 +178,7 @@
             updateDisplayScale()
 
             core.isAttached = { [weak self] in self?.window != nil }
+            core.isFocused = { [weak self] in self?.isFirstResponder ?? false }
             core.displayLinkContext = .view(self)
             core.scaleFactor = { [weak self] in
                 Double(self?.resolvedDisplayScale() ?? UITerminalView.fallbackDisplayScale)
