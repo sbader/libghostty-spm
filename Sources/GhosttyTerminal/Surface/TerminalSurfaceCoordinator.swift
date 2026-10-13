@@ -46,6 +46,8 @@ final class TerminalSurfaceCoordinator {
     // MARK: - Platform Hooks
 
     var isAttached: () -> Bool = { false }
+    /// Ghostty surfaces start focused; new ones are told the view's actual focus.
+    var isFocused: () -> Bool = { false }
     /// Where frames come from. Platform views bind it to themselves, so the
     /// link follows the display their window is on; `.main` serves a
     /// coordinator with no view, as in tests.
@@ -230,6 +232,7 @@ final class TerminalSurfaceCoordinator {
         surface = newSurface
         surfaceSession = configuration.inMemorySession
         newSurface.setOcclusion(effectiveSurfaceVisible)
+        newSurface.setFocus(isFocused())
         // Wakeups must keep draining while the surface is merely occluded:
         // the app mailbox (titles, pwd, bell, child-exit) only empties in
         // ghostty_app_tick, and a full mailbox blocks the session's write
