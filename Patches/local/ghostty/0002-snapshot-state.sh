@@ -99,9 +99,22 @@ src.insert_before(
         .suppress_terminal_responses = true,
         .suppress_replay_side_effects = true,
     };
+    // A decoded terminal carries the colors the shell set, but not the
+    // configured defaults beneath them; without these it renders unthemed.
+    const background = self.terminal.colors.background.default;
+    const foreground = self.terminal.colors.foreground.default;
+    const cursor = self.terminal.colors.cursor.default;
+    const palette = self.terminal.colors.palette.original.*;
     self.terminal_stream.deinit();
     self.terminal.deinit(self.alloc);
     self.terminal = decoded.toOwned();
+    self.terminal.colors.background.default = background;
+    self.terminal.colors.foreground.default = foreground;
+    self.terminal.colors.cursor.default = cursor;
+    self.terminal.colors.palette.changeDefault(self.alloc, palette) catch |err| {
+        log.warn("error restoring default palette, using built-in default err={}", .{err});
+        self.terminal.colors.palette.resetDefault(self.alloc);
+    };
     self.terminal_stream = .init(.{ .allocator = self.alloc, .handler = handler });
     switch (decoded.continuation) {
         .ground => {},
