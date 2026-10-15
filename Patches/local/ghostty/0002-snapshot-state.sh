@@ -96,6 +96,7 @@ src.insert_before(
         .osc_color_report_format = old.osc_color_report_format,
         .clipboard_write = old.clipboard_write,
         .clipboard_write_limit = old.clipboard_write_limit,
+        .xt_checksum_report = old.xt_checksum_report,
         .suppress_terminal_responses = true,
         .suppress_replay_side_effects = true,
     };
