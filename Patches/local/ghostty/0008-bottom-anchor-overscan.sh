@@ -82,13 +82,6 @@ fn anchorPaddingIfNeeded(self: *Surface) void {
     self.size.padding.top = self.size.screen.height -|
         self.size.padding.bottom -|
         rows * self.size.cell.height;
-    // DEBUG-BOTTOM-ANCHOR
-    log.info("bottom anchor screen={} rows={} cell={} top={}", .{
-        self.size.screen.height,
-        rows,
-        self.size.cell.height,
-        self.size.padding.top,
-    });
 }
 
 pub fn setBottomAnchored(self: *Surface, enabled: bool) !void {
@@ -279,6 +272,38 @@ src.insert_after(
                 @as(u32, self.rows_above) * self.grid_metrics.cell_height,
             );
             defer self.external_frame_offset = frame_offset;
+""",
+)
+# Edits of their own, anchored on text the edits above insert, so a tree
+# patched before them takes them too.
+src.insert_after(
+    """        rows_above: terminal.size.CellCountInt = 0,
+""",
+    """
+        /// The surface keeps its last row at the bottom; a frame ends there too.
+        bottom_anchored: bool = false,
+""",
+)
+src.insert_before(
+    """                self.terminal_state.overscan_request = .{
+""",
+    """                if (self.bottom_anchored != state.overscan_above) {
+                    self.bottom_anchored = state.overscan_above;
+                    self.external_frame_uniforms = true;
+                }
+""",
+)
+src.insert_after(
+    """            defer self.external_frame_offset = frame_offset;
+""",
+    """            // The padding follows the live grid's rows; a frame of other rows
+            // still ends on the surface's last line.
+            if (self.bottom_anchored) if (self.external_frame_rows) |frame_rows| {
+                const frame_top: i64 = @as(i64, self.size.screen.height) -
+                    @as(i64, self.size.padding.bottom) -
+                    @as(i64, frame_rows) * @as(i64, self.grid_metrics.cell_height);
+                self.external_frame_offset += @floatFromInt(@as(i64, self.size.padding.top) - frame_top);
+            };
 """,
 )
 src.save()
