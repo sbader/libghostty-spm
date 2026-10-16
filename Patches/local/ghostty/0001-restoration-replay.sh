@@ -53,6 +53,20 @@ src.insert_before(
     }
 
 """,
+    marker="    pub fn discardIfReplaySideEffect(self: Message) bool {\n",
+)
+# OSC 52 writes reach the pasteboard: only this device can write it, so live output must not drop them.
+src.replace(
+    """            .clipboard_write => |value| {
+                switch (value.req) {
+                    .alloc => |v| v.alloc.free(v.data),
+                    else => {},
+                }
+                return true;
+            },
+""",
+    """            // OSC 52 writes still land: the host cannot reach this device's pasteboard.
+""",
 )
 src.append(
     """
@@ -63,6 +77,14 @@ test "restoration effects are opt-in" {
     try testing.expect(bell.discardIfReplaySideEffect());
     try testing.expect((Message{ .present_surface = {} }).discardIfReplaySideEffect());
 }
+""",
+    marker='test "restoration effects are opt-in" {\n',
+)
+src.insert_after(
+    """    try testing.expect((Message{ .present_surface = {} }).discardIfReplaySideEffect());
+""",
+    """    const write: Message = .{ .clipboard_write = .{ .clipboard_type = .standard, .req = try .init(testing.allocator, @as([]const u8, "copied")) } };
+    try testing.expect(!write.discardIfReplaySideEffect());
 """,
 )
 src.save()
