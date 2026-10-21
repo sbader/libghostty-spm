@@ -65,10 +65,10 @@
             }
             TerminalPasteboardContent.files { [weak self] paths in
                 guard let self, let paths else {
-                    TerminalDebugLog.log(.input, "paste skipped: pasteboard has nothing pasteable")
+                    TerminalDebugLog.log(.clipboard, "paste skipped: pasteboard has nothing pasteable")
                     return
                 }
-                TerminalDebugLog.log(.input, "paste files bytes=\(paths.utf8.count)")
+                TerminalDebugLog.log(.clipboard, "paste files bytes=\(paths.utf8.count)")
                 surface?.paste(text: paths)
             }
         }

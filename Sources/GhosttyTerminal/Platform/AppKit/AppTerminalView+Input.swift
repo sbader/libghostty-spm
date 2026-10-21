@@ -122,7 +122,7 @@
         @IBAction open func paste(_: Any?) {
             if let text = NSPasteboard.general.string(forType: .string) {
                 TerminalDebugLog.log(
-                    .input,
+                    .clipboard,
                     "paste binding bytes=\(text.utf8.count) lines=\(TerminalInputText.lineCount(in: text))",
                 )
             }

@@ -333,7 +333,7 @@
                 }
             #endif
             TerminalDebugLog.log(
-                .input,
+                .clipboard,
                 "selection copied bytes=\(text.utf8.count) lines=\(TerminalInputText.lineCount(in: text))",
             )
             return true

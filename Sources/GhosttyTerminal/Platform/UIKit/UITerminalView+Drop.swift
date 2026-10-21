@@ -42,10 +42,10 @@
                 TerminalDebugLog.log(.input, "drop staging \(files.count) file(s)")
                 TerminalFileStaging.stage(files) { [weak self] paths in
                     guard let self, let paths else {
-                        TerminalDebugLog.log(.input, "drop skipped: no file could be staged")
+                        TerminalDebugLog.log(.clipboard, "drop skipped: no file could be staged")
                         return
                     }
-                    TerminalDebugLog.log(.input, "drop files bytes=\(paths.utf8.count)")
+                    TerminalDebugLog.log(.clipboard, "drop files bytes=\(paths.utf8.count)")
                     _ = surface?.paste(text: paths)
                 }
                 return
@@ -54,7 +54,7 @@
                 _ = session.loadObjects(ofClass: NSURL.self) { [weak self] objects in
                     let urls = objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
                     guard let self, let text = TerminalPasteboardContent.text(string: nil, urls: urls) else { return }
-                    TerminalDebugLog.log(.input, "drop urls count=\(urls.count)")
+                    TerminalDebugLog.log(.clipboard, "drop urls count=\(urls.count)")
                     _ = surface?.paste(text: text)
                 }
                 return
@@ -63,7 +63,7 @@
                 _ = session.loadObjects(ofClass: NSString.self) { [weak self] objects in
                     let text = objects.compactMap { ($0 as? NSString).map { $0 as String } }.joined()
                     guard let self, !text.isEmpty else { return }
-                    TerminalDebugLog.log(.input, "drop text bytes=\(text.utf8.count)")
+                    TerminalDebugLog.log(.clipboard, "drop text bytes=\(text.utf8.count)")
                     _ = surface?.paste(text: text)
                 }
             }

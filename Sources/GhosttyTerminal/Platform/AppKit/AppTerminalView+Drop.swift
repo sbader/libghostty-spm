@@ -89,16 +89,16 @@
             let pasteboard = sender.draggingPasteboard
             switch dropPayload(from: pasteboard) {
             case let .text(text):
-                TerminalDebugLog.log(.input, "drop text bytes=\(text.utf8.count)")
+                TerminalDebugLog.log(.clipboard, "drop text bytes=\(text.utf8.count)")
                 return surface?.paste(text: text) ?? false
             case let .image(type):
                 guard let (data, utType) = Self.encodedImage(in: pasteboard, type: type) else { return false }
                 TerminalFileStaging.stage(data: data, name: "image", type: utType) { [weak self] path in
                     guard let self, let path else {
-                        TerminalDebugLog.log(.input, "drop skipped: the image could not be staged")
+                        TerminalDebugLog.log(.clipboard, "drop skipped: the image could not be staged")
                         return
                     }
-                    TerminalDebugLog.log(.input, "drop image bytes=\(data.count)")
+                    TerminalDebugLog.log(.clipboard, "drop image bytes=\(data.count)")
                     _ = surface?.paste(text: path)
                 }
                 return true

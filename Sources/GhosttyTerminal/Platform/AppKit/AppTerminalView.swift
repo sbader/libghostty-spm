@@ -154,7 +154,7 @@
                 return false
             }
             TerminalDebugLog.log(
-                .input,
+                .clipboard,
                 "selection copied to clipboard",
             )
             return true

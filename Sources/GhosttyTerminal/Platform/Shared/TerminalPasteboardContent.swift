@@ -80,7 +80,7 @@ public enum TerminalPasteboardContent {
             let files = general.contains(where: \.isFileURL) ? [] : fileURLs(in: pasteboard)
             let urls = files + general
             if !urls.isEmpty {
-                TerminalDebugLog.log(.input, "paste resolved \(urls.count) url(s), \(files.count) file url(s)")
+                TerminalDebugLog.log(.clipboard, "paste resolved \(urls.count) url(s), \(files.count) file url(s)")
             }
             return text(string: pasteboard.hasStrings ? pasteboard.string : nil, urls: urls)
         }

@@ -353,13 +353,13 @@ final class TerminalCallbackBridge {
         #endif
 
         guard let surface = rawSurface else {
-            TerminalDebugLog.log(.input, "clipboard confirm resolve skipped: missing surface")
+            TerminalDebugLog.log(.clipboard, "clipboard confirm resolve skipped: missing surface")
             return
         }
 
         guard allowed else {
             ghostty_surface_deny_clipboard_request(surface, statePtr)
-            TerminalDebugLog.log(.input, "clipboard confirm denied")
+            TerminalDebugLog.log(.clipboard, "clipboard confirm denied")
             return
         }
 
@@ -371,7 +371,7 @@ final class TerminalCallbackBridge {
         ) { complete in
             ghostty_surface_complete_clipboard_request(surface, complete, statePtr)
         }
-        TerminalDebugLog.log(.input, "clipboard confirm allowed")
+        TerminalDebugLog.log(.clipboard, "clipboard confirm allowed")
     }
 }
 

@@ -254,6 +254,10 @@
                 }
             #endif
             dismissTouchSelection()
+            TerminalDebugLog.log(
+                .clipboard,
+                "touch selection copied bytes=\(copied.utf8.count) lines=\(TerminalInputText.lineCount(in: copied))",
+            )
             return true
         }
     }

@@ -103,7 +103,7 @@ private enum TerminalCallbacks {
         guard !payloads.isEmpty else { return }
 
         TerminalDebugLog.log(
-            .input,
+            .clipboard,
             "clipboard write count=\(payloads.count) mimes=\(payloads.map(\.mime).joined(separator: ",")) confirm=\(confirm)",
         )
 
@@ -119,7 +119,7 @@ private enum TerminalCallbacks {
         terminalRunOnMain {
             bridge.handleClipboardConfirmation(contents: text, kind: .osc52Write) { allowed in
                 TerminalDebugLog.log(
-                    .input,
+                    .clipboard,
                     allowed ? "clipboard write allowed" : "clipboard write denied",
                 )
                 guard allowed else { return }
@@ -181,13 +181,13 @@ private enum TerminalCallbacks {
             && !requestedMimes.isEmpty
             && !requestedMimes.contains(where: isTextLikeMime)
         if wantsUnsupportedMime {
-            TerminalDebugLog.log(.input, "clipboard paste read unsupported mimes=\(requestedMimes)")
+            TerminalDebugLog.log(.clipboard, "clipboard paste read unsupported mimes=\(requestedMimes)")
             return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
         }
 
         guard !wantsListOnly else {
             let available = TerminalPasteboardContent.hasText() ? ["text/plain"] : []
-            TerminalDebugLog.log(.input, "clipboard paste list available=\(available)")
+            TerminalDebugLog.log(.clipboard, "clipboard paste list available=\(available)")
             bridge.completeClipboardRead(statePtr: statePtr, contents: [], available: available)
             return GHOSTTY_CLIPBOARD_READ_STARTED
         }
@@ -204,17 +204,17 @@ private enum TerminalCallbacks {
         let available = listAvailable && hasText ? ["text/plain"] : []
 
         guard let string, hasText else {
-            TerminalDebugLog.log(.input, "clipboard paste read empty")
+            TerminalDebugLog.log(.clipboard, "clipboard paste read empty")
             return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
         }
 
         TerminalDebugLog.log(
-            .input,
+            .clipboard,
             "clipboard paste read bytes=\(string.utf8.count) lines=\(TerminalInputText.lineCount(in: string))",
         )
         let content = TerminalClipboardContent(mime: "text/plain", data: Data(string.utf8))
         bridge.completeClipboardRead(statePtr: statePtr, contents: [content], available: available)
-        TerminalDebugLog.log(.input, "clipboard paste complete")
+        TerminalDebugLog.log(.clipboard, "clipboard paste complete")
         return GHOSTTY_CLIPBOARD_READ_STARTED
     }
 
@@ -247,7 +247,7 @@ private enum TerminalCallbacks {
         // request hangs the requesting program indefinitely.
         guard let kind = TerminalClipboardRequestKind(request) else {
             TerminalDebugLog.log(
-                .input,
+                .clipboard,
                 "clipboard confirm denied: unrecognized request kind=\(request.rawValue)",
             )
             // Round-tripped through a bit pattern, not captured directly:
@@ -264,7 +264,7 @@ private enum TerminalCallbacks {
         }
 
         TerminalDebugLog.log(
-            .input,
+            .clipboard,
             "clipboard paste confirm request=\(request.rawValue) bytes=\(text.utf8.count) lines=\(TerminalInputText.lineCount(in: text))",
         )
 

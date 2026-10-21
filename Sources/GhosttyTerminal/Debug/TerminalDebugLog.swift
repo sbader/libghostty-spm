@@ -15,6 +15,7 @@ public struct TerminalDebugCategory: OptionSet, Sendable {
     public static let ime = Self(rawValue: 1 << 4)
     public static let actions = Self(rawValue: 1 << 5)
     public static let render = Self(rawValue: 1 << 6)
+    public static let clipboard = Self(rawValue: 1 << 7)
 
     public static let standard: Self = [
         .lifecycle,
@@ -23,6 +24,7 @@ public struct TerminalDebugCategory: OptionSet, Sendable {
         .output,
         .ime,
         .actions,
+        .clipboard,
     ]
 
     public static let all: Self = [
@@ -203,6 +205,8 @@ public enum TerminalDebugLog {
             "ime"
         case .actions:
             "actions"
+        case .clipboard:
+            "clipboard"
         case .render:
             "render"
         default:

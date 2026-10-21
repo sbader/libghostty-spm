@@ -147,7 +147,7 @@ public final class TerminalViewState: ObservableObject {
     @discardableResult
     public func paste(text: String) -> Bool {
         guard let surface else {
-            TerminalDebugLog.log(.input, "view state paste ignored: missing surface")
+            TerminalDebugLog.log(.clipboard, "view state paste ignored: missing surface")
             return false
         }
         return surface.paste(text: text)

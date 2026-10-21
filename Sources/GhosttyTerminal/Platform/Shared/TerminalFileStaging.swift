@@ -83,7 +83,7 @@ public enum TerminalFileStaging {
             try FileManager.default.removeItem(at: directory)
         } catch CocoaError.fileNoSuchFile {
         } catch {
-            TerminalDebugLog.log(.input, "staged files not removed: \(error)")
+            TerminalDebugLog.log(.clipboard, "staged files not removed: \(error)")
         }
     }
 
@@ -132,7 +132,7 @@ public enum TerminalFileStaging {
         // global queue.
         group.notify(queue: .global(qos: .userInitiated)) { @Sendable in
             let resolved = paths.resolved
-            TerminalDebugLog.log(.input, "staged \(resolved.count)/\(items.count) file(s)")
+            TerminalDebugLog.log(.clipboard, "staged \(resolved.count)/\(items.count) file(s)")
             terminalRunOnMain {
                 completion(resolved.isEmpty ? nil : resolved.map(TerminalShellEscape.escape).joined(separator: " "))
             }
@@ -251,7 +251,7 @@ public enum TerminalFileStaging {
             )
             return destination.path
         } catch {
-            TerminalDebugLog.log(.input, "staged file write failed: \(error)")
+            TerminalDebugLog.log(.clipboard, "staged file write failed: \(error)")
             return nil
         }
     }
