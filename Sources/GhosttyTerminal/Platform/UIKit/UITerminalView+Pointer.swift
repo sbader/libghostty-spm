@@ -183,10 +183,12 @@
         }
 
         func pointerMods() -> ghostty_input_mods_e {
+            // The hover recognizer's flags lag a modifier pressed while the
+            // pointer rests, so a held key counts as well.
             if let hover = pointer.hoverRecognizer,
                hover.state == .began || hover.state == .changed
             {
-                return TerminalInputModifiers(from: hover.modifierFlags).ghosttyMods
+                return TerminalInputModifiers(from: hover.modifierFlags.union(hardwareKeyboard.heldModifierFlags)).ghosttyMods
             }
             #if !targetEnvironment(macCatalyst) && canImport(GameController)
                 if let live = gameControllerPointerMods() {

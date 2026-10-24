@@ -218,6 +218,8 @@
             /// row already — and the click still clears a selection.
             func tapClickPoint(for point: CGPoint, on surface: TerminalSurface) -> CGPoint {
                 guard !surface.isMouseCaptured else { return point }
+                // A Command tap opens the link under the finger.
+                if TerminalInputModifiers(rawValue: pointerMods().rawValue).contains(.super_) { return point }
                 // `imePoint` is the cursor cell's horizontal midpoint and
                 // bottom edge, in view points.
                 let cursor = surface.imePoint()

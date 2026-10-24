@@ -5,6 +5,7 @@
 //  Created by Lakr233 on 2026/3/16.
 //
 
+import CoreGraphics
 import Foundation
 import GhosttyKit
 
@@ -291,6 +292,30 @@ public final class TerminalSurface {
 
     public func readSelection() -> String? {
         readSelectionResult()?.text
+    }
+
+    /// Selects the word at `point`, in view points, as a double click would
+    /// but without clicking. False over blank or whitespace cells, which
+    /// keep the current selection.
+    public func selectWord(at point: CGPoint) -> Bool {
+        guard let s = surface else { return false }
+        let result = ghostty_surface_select_word_at(s, Double(point.x), Double(point.y))
+        TerminalDebugLog.log(.input, "surface selectWord point=\(point.x)x\(point.y) result=\(result)")
+        return result
+    }
+
+    /// What a Command (or Control) click at `point`, in view points, would
+    /// open: an OSC 8 URI or the text a configured link pattern matched.
+    public func linkURL(at point: CGPoint) -> String? {
+        guard let s = surface else { return nil }
+        var out = ghostty_text_s()
+        guard ghostty_surface_link_at(s, Double(point.x), Double(point.y), &out) else { return nil }
+        defer { ghostty_surface_free_text(s, &out) }
+        guard let text = out.text, out.text_len > 0 else { return nil }
+        let bytes = UnsafeBufferPointer(start: text, count: Int(out.text_len)).map { UInt8(bitPattern: $0) }
+        let link = String(decoding: bytes, as: UTF8.self)
+        TerminalDebugLog.log(.input, "surface linkURL point=\(point.x)x\(point.y) link=\(TerminalDebugLog.describe(link))")
+        return link
     }
 
     func readSelectionResult() -> SelectionResult? {
