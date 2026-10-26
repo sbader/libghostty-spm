@@ -370,6 +370,30 @@
             }
         }
 
+        /// UIKit's key path has no step that reports this, unlike AppKit's
+        /// `performKeyEquivalent`.
+        public func keyIsBinding(_ key: UIKey) -> Bool {
+            guard let surface else { return false }
+            let flags = filteredModifierFlags(for: key)
+            var event = ghostty_input_key_s()
+            event.action = GHOSTTY_ACTION_PRESS
+            event.mods = TerminalInputModifiers(from: flags).ghosttyMods
+            event.keycode = TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
+                usage: UInt16(key.keyCode.rawValue),
+            )
+            var consumedFlags = flags
+            consumedFlags.remove(.control)
+            consumedFlags.remove(.command)
+            event.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
+            if let codepoint = TerminalInputText.filteredFunctionKeyText(key.charactersIgnoringModifiers)?
+                .unicodeScalars.first
+            {
+                event.unshifted_codepoint = codepoint.value
+            }
+            // Ghostty matches bindings without text.
+            return surface.keyIsBinding(event)
+        }
+
         func shouldSuppressUIKeyInput(
             for key: UIKey,
             isCommandModified: Bool,

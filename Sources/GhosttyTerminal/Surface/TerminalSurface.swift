@@ -54,6 +54,12 @@ public final class TerminalSurface {
         return result
     }
 
+    public func keyIsBinding(_ event: ghostty_input_key_s) -> Bool {
+        guard let s = surface else { return false }
+        var flags = ghostty_binding_flags_e(rawValue: 0)
+        return ghostty_surface_key_is_binding(s, event, &flags)
+    }
+
     /// Pastes text into the surface. This is the text path: ghostty treats
     /// it as a paste, wrapping it in bracketed-paste markers for a program
     /// that asked for them. Keystrokes go through ``sendKey(_:)``.
